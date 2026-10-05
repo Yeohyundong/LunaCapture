@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>LunaCapture</RootNamespace>
+    <AssemblyName>LunaCapture</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <Version>1.0.0</Version>
+    <Product>LunaCapture</Product>
+    <Description>가벼운 화면 캡처 · GIF · 동영상 녹화</Description>
+
+    <!-- 가볍게: 단일 exe, 런타임 설치 불필요 (publish 시 C++ 빌드 도구 필요) -->
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <OptimizationPreference>Size</OptimizationPreference>
+
+    <!-- 메모리 절약형 GC 설정 -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <TieredPGO>false</TieredPGO>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- UI 글꼴(Luna Sans = Pretendard 축소판, SIL OFL 1.1)을 exe 안에 넣는다 → 설치 없이 어디서나 같은 모양 -->
+    <EmbeddedResource Include="Fonts\*.ttf" LogicalName="Fonts.%(Filename)%(Extension)" />
+    <!-- 글꼴 라이선스는 배포 폴더에 함께 둔다 (OFL 요구사항) -->
+    <None Include="Fonts\*.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
