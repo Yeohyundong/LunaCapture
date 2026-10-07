@@ -3,7 +3,7 @@ using LunaCapture.Interop;
 
 namespace LunaCapture.Editor;
 
-internal enum Tool { Arrow, Rect, Pen, Highlighter, Text, Mosaic, Bubble, Number, Sticker }
+internal enum Tool { Arrow, Rect, Pen, Highlighter, Text, Mosaic, Bubble, Number, Sticker, Select }
 
 /// <summary>이미지 좌표계(실제 픽셀)에 그려지는 주석 하나.</summary>
 internal abstract class Annotation
@@ -447,6 +447,149 @@ internal sealed unsafe class MosaicAnnotation : Annotation
                     uint* row = (uint*)(target.Bits + y * target.Stride) + bx;
                     for (int x = 0; x < bw; x++) row[x] = avg;
                 }
+            }
+        }
+    }
+}
+
+/// <summary>
+/// 그림 조각: 오려낸 영역이나 붙여넣은 그림. 옮기고, 모서리를 끌어 비율을 유지한 채 크기를 바꾼다.
+/// 그림은 바뀌지 않으므로 되돌리기용 복사본끼리 같은 픽셀을 함께 쓴다(가볍다).
+/// </summary>
+internal sealed unsafe class ImageAnnotation : Annotation
+{
+    public required PixelImage Image;
+    public PointF A, B;
+
+    public RectF Box => Geo.FromPoints(A, B);
+    public override bool IsMeaningful => true;
+    public override RectF Bounds(Gfx g) => Box;
+    public override bool HitTest(PointF p, float tol, Gfx g) => Geo.Inside(Geo.Inflate(Box, tol), p);
+    public override void Offset(float dx, float dy) { A = new(A.X + dx, A.Y + dy); B = new(B.X + dx, B.Y + dy); }
+
+    /// <summary>픽셀을 직접 옮겨 그린다: 크기가 같으면 그대로, 다르면 부드럽게(쌍선형) 늘이거나 줄인다. 투명도도 반영.</summary>
+    public override void Draw(GdiSurface t, Gfx g)
+    {
+        var r = Box;
+        if (r.Width < 1 || r.Height < 1) return;
+        Gdi32.GdiFlush();
+        int x0 = Math.Clamp((int)MathF.Floor(r.X), 0, t.Width), x1 = Math.Clamp((int)MathF.Ceiling(r.X + r.Width), 0, t.Width);
+        int y0 = Math.Clamp((int)MathF.Floor(r.Y), 0, t.Height), y1 = Math.Clamp((int)MathF.Ceiling(r.Y + r.Height), 0, t.Height);
+        int iw = Image.Width, ih = Image.Height;
+        float kx = iw / r.Width, ky = ih / r.Height;
+        bool same = MathF.Abs(kx - 1) < 0.001f && MathF.Abs(ky - 1) < 0.001f;
+
+        fixed (byte* srcBytes = Image.Bgra)
+        {
+            uint* src = (uint*)srcBytes;
+            for (int y = y0; y < y1; y++)
+            {
+                uint* row = (uint*)(t.Bits + y * t.Stride);
+                for (int x = x0; x < x1; x++)
+                {
+                    uint c;
+                    if (same)
+                    {
+                        int ix = (int)MathF.Floor(x - r.X + 0.5f), iy = (int)MathF.Floor(y - r.Y + 0.5f);
+                        if ((uint)ix >= (uint)iw || (uint)iy >= (uint)ih) continue;
+                        c = src[iy * iw + ix];
+                    }
+                    else
+                    {
+                        float fx = (x + 0.5f - r.X) * kx - 0.5f, fy = (y + 0.5f - r.Y) * ky - 0.5f;
+                        if (fx < -0.5f || fy < -0.5f || fx > iw - 0.5f || fy > ih - 0.5f) continue;
+                        c = Bilinear(src, iw, ih, fx, fy);
+                    }
+                    uint a = c >> 24;
+                    if (a == 255) row[x] = c;
+                    else if (a > 0) row[x] = Blend(row[x], c, a);
+                }
+            }
+        }
+    }
+
+    static uint Bilinear(uint* src, int w, int h, float fx, float fy)
+    {
+        int ix = (int)MathF.Floor(fx), iy = (int)MathF.Floor(fy);
+        float tx = fx - ix, ty = fy - iy;
+        int xa = Math.Clamp(ix, 0, w - 1), xb = Math.Clamp(ix + 1, 0, w - 1);
+        int ya = Math.Clamp(iy, 0, h - 1), yb = Math.Clamp(iy + 1, 0, h - 1);
+        uint c00 = src[ya * w + xa], c10 = src[ya * w + xb], c01 = src[yb * w + xa], c11 = src[yb * w + xb];
+        uint result = 0;
+        for (int s = 0; s < 32; s += 8)
+        {
+            float top = ((c00 >> s) & 0xFF) * (1 - tx) + ((c10 >> s) & 0xFF) * tx;
+            float bottom = ((c01 >> s) & 0xFF) * (1 - tx) + ((c11 >> s) & 0xFF) * tx;
+            result |= (uint)Math.Clamp((int)(top * (1 - ty) + bottom * ty + 0.5f), 0, 255) << s;
+        }
+        return result;
+    }
+
+    static uint Blend(uint dst, uint src, uint a)
+    {
+        uint inv = 255 - a, result = 0xFF000000;
+        for (int s = 0; s < 24; s += 8)
+            result |= ((((src >> s) & 0xFF) * a + ((dst >> s) & 0xFF) * inv) / 255) << s;
+        return result;
+    }
+}
+
+/// <summary>오려낸 자리를 메우는 칸 (주변 색으로 칠함). 클릭해서 잡히지 않는다.</summary>
+internal sealed class PatchAnnotation : Annotation
+{
+    public PointF A, B;
+
+    public override bool IsMeaningful => true;
+    public override RectF Bounds(Gfx g) => Geo.FromPoints(A, B);
+    public override bool HitTest(PointF p, float tol, Gfx g) => false;
+    public override void Offset(float dx, float dy) { A = new(A.X + dx, A.Y + dy); B = new(B.X + dx, B.Y + dy); }
+
+    public override void Draw(GdiSurface target, Gfx g)
+    {
+        var r = Geo.FromPoints(A, B);
+        g.FillRect(Color, r.X, r.Y, r.Width, r.Height);
+    }
+}
+
+/// <summary>
+/// 강조(스포트라이트): 이 영역만 밝게 두고 나머지를 어둡게. 여러 개면 모두 밝게 남긴 채 한 번만 어둡게 한다
+/// (Composer.DrawAll이 처리). 테두리 근처를 잡아 옮기거나 모서리로 크기를 바꾼다 — 안쪽은 비워 둬서 그 위에 그릴 수 있다.
+/// </summary>
+internal sealed unsafe class SpotlightAnnotation : Annotation
+{
+    public PointF A, B;
+
+    public RectF Box => Geo.FromPoints(A, B);
+    public override bool IsMeaningful => MathF.Abs(A.X - B.X) > 3 && MathF.Abs(A.Y - B.Y) > 3;
+    public override RectF Bounds(Gfx g) => Box;
+    public override bool HitTest(PointF p, float tol, Gfx g) => Geo.NearEdge(Box, p, tol + 2);
+    public override void Offset(float dx, float dy) { A = new(A.X + dx, A.Y + dy); B = new(B.X + dx, B.Y + dy); }
+
+    public override void Draw(GdiSurface target, Gfx g) => DimOutside(target, [Box]);
+
+    /// <summary>구멍(holes) 바깥의 픽셀을 어둡게 (밝기 40%).</summary>
+    public static void DimOutside(GdiSurface t, List<RectF> holes)
+    {
+        Gdi32.GdiFlush();
+        Span<int> hx0 = stackalloc int[holes.Count], hx1 = stackalloc int[holes.Count];
+        Span<int> hy0 = stackalloc int[holes.Count], hy1 = stackalloc int[holes.Count];
+        for (int i = 0; i < holes.Count; i++)
+        {
+            var r = holes[i];
+            hx0[i] = (int)MathF.Round(r.X); hx1[i] = (int)MathF.Round(r.X + r.Width);
+            hy0[i] = (int)MathF.Round(r.Y); hy1[i] = (int)MathF.Round(r.Y + r.Height);
+        }
+        for (int y = 0; y < t.Height; y++)
+        {
+            uint* row = (uint*)(t.Bits + y * t.Stride);
+            for (int x = 0; x < t.Width; x++)
+            {
+                bool inside = false;
+                for (int i = 0; i < holes.Count && !inside; i++)
+                    inside = x >= hx0[i] && x < hx1[i] && y >= hy0[i] && y < hy1[i];
+                if (inside) continue;
+                uint c = row[x];
+                row[x] = 0xFF000000 | ((((c >> 16) & 0xFF) * 102 >> 8) << 16) | ((((c >> 8) & 0xFF) * 102 >> 8) << 8) | ((c & 0xFF) * 102 >> 8);
             }
         }
     }

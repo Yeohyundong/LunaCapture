@@ -182,18 +182,22 @@ internal sealed unsafe partial class TrayApp : NativeWindow
     EditorDocument MakeDocument(PixelImage original, List<Annotation> items, string? savedPath, string? historyId)
     {
         string? path = savedPath;
+        var savedOriginal = original;
         return new EditorDocument
         {
             Original = original,
             Items = items,
             HistoryId = historyId,
-            Save = (edited, finalItems) =>
+            Save = (edited, newOriginal, finalItems) =>
             {
                 try
                 {
                     ClipboardService.SetImage(Handle, edited);
                     path = SaveImage(edited, path);
-                    if (historyId != null) HistoryStore.UpdateImage(historyId, edited, finalItems, path);
+                    // 자르기로 원본이 바뀌었을 때만 원본 파일도 다시 쓴다
+                    var changed = ReferenceEquals(newOriginal, savedOriginal) ? null : newOriginal;
+                    savedOriginal = newOriginal;
+                    if (historyId != null) HistoryStore.UpdateImage(historyId, edited, finalItems, path, changed);
                     _history?.Reload();
                 }
                 catch (Exception ex)

@@ -209,6 +209,8 @@ internal static unsafe partial class User32
     [LibraryImport(Dll)] public static partial int EmptyClipboard();
     [LibraryImport(Dll)] public static partial nint SetClipboardData(uint format, nint mem);
     [LibraryImport(Dll)] public static partial int CloseClipboard();
+    [LibraryImport(Dll)] public static partial int IsClipboardFormatAvailable(uint format);
+    [LibraryImport(Dll)] public static partial nint GetClipboardData(uint format);
     [LibraryImport(Dll)] public static partial int SetProcessDpiAwarenessContext(nint ctx);
     [LibraryImport(Dll, StringMarshalling = StringMarshalling.Utf16)]
     public static partial uint RegisterWindowMessageW(string name);
@@ -416,6 +418,7 @@ internal static unsafe partial class Kernel32
     [LibraryImport(Dll)] public static partial void* GlobalLock(nint mem);
     [LibraryImport(Dll)] public static partial int GlobalUnlock(nint mem);
     [LibraryImport(Dll)] public static partial nint GlobalFree(nint mem);
+    [LibraryImport(Dll)] public static partial nuint GlobalSize(nint mem);
     [LibraryImport(Dll)] public static partial nint GetCurrentProcess();
     [LibraryImport(Dll)] public static partial uint GetCurrentThreadId();
     [LibraryImport(Dll)] public static partial int SetProcessWorkingSetSize(nint proc, nint min, nint max);

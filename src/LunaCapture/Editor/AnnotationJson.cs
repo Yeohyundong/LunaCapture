@@ -22,6 +22,10 @@ internal sealed class AnnotationDto
     public float Size { get; set; }
     public int BlockSize { get; set; }
     public bool Highlighter { get; set; }
+    /// <summary>그림 조각: 크기 + 픽셀(BGRA를 압축해 base64)</summary>
+    public int Iw { get; set; }
+    public int Ih { get; set; }
+    public string? Data { get; set; }
 }
 
 internal static class AnnotationJson
@@ -45,8 +49,27 @@ internal static class AnnotationJson
         StickerAnnotation x => new() { Type = "sticker", Pts = P(x.Center), Kind = (int)x.Kind, Size = x.Size },
         NumberAnnotation x => new() { Type = "number", Color = x.Color, Pts = P(x.Center), Number = x.Number, Size = x.Size },
         MosaicAnnotation x => new() { Type = "mosaic", Pts = P(x.A, x.B), BlockSize = x.BlockSize },
+        ImageAnnotation x => new() { Type = "image", Pts = P(x.A, x.B), Iw = x.Image.Width, Ih = x.Image.Height, Data = Pack(x.Image.Bgra) },
+        PatchAnnotation x => new() { Type = "patch", Color = x.Color, Pts = P(x.A, x.B) },
+        SpotlightAnnotation x => new() { Type = "spotlight", Pts = P(x.A, x.B) },
         _ => new() { Type = "unknown" },
     };
+
+    static string Pack(byte[] bgra)
+    {
+        using var ms = new MemoryStream();
+        using (var z = new System.IO.Compression.ZLibStream(ms, System.IO.Compression.CompressionLevel.Fastest)) z.Write(bgra);
+        return Convert.ToBase64String(ms.ToArray());
+    }
+
+    static ImageAnnotation? Unpack(AnnotationDto d)
+    {
+        if (d.Iw <= 0 || d.Ih <= 0 || d.Data == null) return null;
+        var img = new Graphics.PixelImage(d.Iw, d.Ih);
+        using var z = new System.IO.Compression.ZLibStream(new MemoryStream(Convert.FromBase64String(d.Data)), System.IO.Compression.CompressionMode.Decompress);
+        z.ReadExactly(img.Bgra);
+        return new ImageAnnotation { Image = img, A = Pt(d.Pts, 0), B = Pt(d.Pts, 1) };
+    }
 
     public static Annotation? FromDto(AnnotationDto d)
     {
@@ -70,6 +93,9 @@ internal static class AnnotationJson
             case "sticker": return new StickerAnnotation { Center = Pt(d.Pts, 0), Kind = (StickerKind)d.Kind, Size = d.Size };
             case "number": return new NumberAnnotation { Color = d.Color, Center = Pt(d.Pts, 0), Number = d.Number, Size = d.Size };
             case "mosaic": return new MosaicAnnotation { A = Pt(d.Pts, 0), B = Pt(d.Pts, 1), BlockSize = d.BlockSize };
+            case "image": try { return Unpack(d); } catch { return null; }
+            case "patch": return new PatchAnnotation { Color = d.Color, A = Pt(d.Pts, 0), B = Pt(d.Pts, 1) };
+            case "spotlight": return new SpotlightAnnotation { A = Pt(d.Pts, 0), B = Pt(d.Pts, 1) };
             default: return null;
         }
     }

@@ -15,6 +15,10 @@ Write-Host "LunaCapture $version 빌드 중... (처음에는 몇 분 걸릴 수 
 dotnet publish $csproj -c Release -r win-x64 -o build\publish
 if ($LASTEXITCODE -ne 0) { throw '빌드 실패' }
 
+# 프로젝트 루트에서도 최신 앱을 바로 실행할 수 있도록 복사
+Copy-Item build\publish\LunaCapture.exe .\LunaCapture.exe -Force
+Copy-Item build\publish\Fonts\*.txt .\ -Force
+
 # dist: 개발용 최신 결과물
 New-Item -ItemType Directory -Force dist | Out-Null
 Copy-Item build\publish\LunaCapture.exe dist\ -Force

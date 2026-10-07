@@ -62,13 +62,19 @@ internal static class HistoryStore
         catch (Exception ex) { Log.Error(ex); return null; }
     }
 
-    /// <summary>편집이 끝나면: 주석 목록과 미리보기(편집본)를 갱신.</summary>
-    public static void UpdateImage(string id, PixelImage composite, IEnumerable<Annotation> items, string? savedPath)
+    /// <summary>편집이 끝나면: 주석 목록과 미리보기(편집본)를 갱신. 자르기로 원본이 바뀌었으면 newOriginal도 저장.</summary>
+    public static void UpdateImage(string id, PixelImage composite, IEnumerable<Annotation> items, string? savedPath, PixelImage? newOriginal = null)
     {
         try
         {
             var e = Read(id);
             if (e == null) return;
+            if (newOriginal != null)
+            {
+                PngEncoder.Save(newOriginal, Orig(id));
+                e.Width = newOriginal.Width;
+                e.Height = newOriginal.Height;
+            }
             e.Items = items.Select(AnnotationJson.ToDto).ToList();
             if (savedPath != null) e.FilePath = savedPath;
             PngEncoder.Save(Composer.Thumbnail(composite, ThumbSide), Thumb(id));

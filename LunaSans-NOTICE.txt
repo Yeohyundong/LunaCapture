@@ -1,0 +1,12 @@
+Luna Sans (LunaCapture UI font)
+
+Luna Sans is a modified version of Pretendard (https://github.com/orioncactus/pretendard),
+Copyright (c) 2021, Kil Hyung-jin, with Reserved Font Name "Pretendard".
+
+Modification: subset to the characters LunaCapture needs (Latin, symbols,
+the 2,350 KS X 1001 Hangul syllables and Hangul compatibility jamo) and renamed
+to "Luna Sans" as required by the SIL Open Font License for modified versions.
+Generated with tools/make_ui_font.py.
+
+Luna Sans is licensed under the SIL Open Font License, Version 1.1.
+See Pretendard-LICENSE.txt for the full license text.

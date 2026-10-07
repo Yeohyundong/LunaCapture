@@ -2,7 +2,7 @@
 
 namespace LunaCapture.Editor;
 
-internal enum ItemKind { Tool, Color, Thickness, Undo, Redo, History, Copy, SaveAs, Done }
+internal enum ItemKind { Tool, Color, Thickness, FontSize, Undo, Redo, History, Copy, SaveAs, Done }
 
 internal struct ToolbarItem
 {
@@ -38,6 +38,7 @@ internal sealed class Toolbar : IDisposable
     // 그리기에 필요한 현재 상태 (편집기가 채워 넣음)
     public Tool CurrentTool;
     public int ColorIndex, ThicknessIndex;
+    public float TextSize = 24;
     public bool CanUndo, CanRedo;
     public int HoverIndex = -1;
     public string Status = "";
@@ -70,6 +71,7 @@ internal sealed class Toolbar : IDisposable
         }
 
         Add(ItemKind.Tool, (int)Tool.Rect, btn, "도형 (R) · 더블클릭하면 글자 넣기");
+        Add(ItemKind.Tool, (int)Tool.Select, btn, "영역 선택 (E) · 복사·저장·오려내기·자르기·강조 · Ctrl+A 전체");
         Add(ItemKind.Tool, (int)Tool.Arrow, btn, "화살표 (A)");
         Add(ItemKind.Tool, (int)Tool.Pen, btn, "펜 (P)");
         Add(ItemKind.Tool, (int)Tool.Highlighter, btn, "형광펜 (H)");
@@ -84,6 +86,10 @@ internal sealed class Toolbar : IDisposable
         Add(ItemKind.Thickness, 0, S(30), "얇게 (1)");
         Add(ItemKind.Thickness, 1, S(30), "보통 (2)");
         Add(ItemKind.Thickness, 2, S(30), "굵게 (3)");
+        x += sep;
+        Add(ItemKind.FontSize, -1, S(30), "글자 작게 · 텍스트·말풍선·도형 안 글자 (최소 8)");
+        Add(ItemKind.FontSize, 0, S(64), "글자 크기 · 입력 중이거나 선택한 글자에 적용");
+        Add(ItemKind.FontSize, 1, S(30), "글자 크게 · 텍스트·말풍선·도형 안 글자 (최대 144)");
         x += sep;
         Add(ItemKind.Undo, 0, btn, "되돌리기 (Ctrl+Z)");
         Add(ItemKind.Redo, 0, btn, "다시 실행 (Ctrl+Y)");
@@ -190,6 +196,10 @@ internal sealed class Toolbar : IDisposable
                 break;
             }
 
+            case ItemKind.FontSize:
+                CenterText(g, it.Value < 0 ? "A−" : it.Value > 0 ? "A+" : $"{TextSize:0.#} px", _label!, fg, b);
+                break;
+
             case ItemKind.Undo:
             case ItemKind.Redo:
                 Icons.Draw(g, it.Kind == ItemKind.Undo ? IconKind.Undo : IconKind.Redo, cx, cy, S(16), fg);
@@ -214,6 +224,24 @@ internal sealed class Toolbar : IDisposable
     {
         switch (tool)
         {
+            case Tool.Select:
+            {
+                // 점선 사각형 (영역 선택)
+                float x0 = cx - r, y0 = cy - r * 0.8f, x1 = cx + r, y1 = cy + r * 0.8f, w = S(1.6f);
+                float dash = (x1 - x0) / 5;
+                for (int i = 0; i < 5; i += 2)
+                {
+                    g.Line(fg, w, x0 + dash * i, y0, x0 + dash * (i + 1), y0);
+                    g.Line(fg, w, x0 + dash * i, y1, x0 + dash * (i + 1), y1);
+                }
+                float vd = (y1 - y0) / 3;
+                for (int i = 0; i < 3; i += 2)
+                {
+                    g.Line(fg, w, x0, y0 + vd * i, x0, y0 + vd * (i + 1));
+                    g.Line(fg, w, x1, y0 + vd * i, x1, y0 + vd * (i + 1));
+                }
+                break;
+            }
             case Tool.Arrow:
                 new ArrowAnnotation { Color = fg, Width = S(2), From = new(cx - r, cy + r), To = new(cx + r, cy - r) }.Draw(null!, g);
                 break;

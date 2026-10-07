@@ -141,6 +141,8 @@ unsafe
         var log = new System.Text.StringBuilder();
         var orig = new LunaCapture.Graphics.PixelImage(640, 400);
         for (int i = 0; i < orig.Bgra.Length; i += 4) { orig.Bgra[i] = (byte)(i / 4 % 640 * 255 / 640); orig.Bgra[i + 1] = 180; orig.Bgra[i + 2] = 90; orig.Bgra[i + 3] = 255; }
+        var piece = new LunaCapture.Graphics.PixelImage(30, 20); // 반투명 그라데이션 조각 (붙여넣기 그림 시험)
+        for (int i = 0; i < piece.Bgra.Length; i += 4) { piece.Bgra[i] = 240; piece.Bgra[i + 1] = (byte)(i / 4 % 30 * 8); piece.Bgra[i + 2] = 40; piece.Bgra[i + 3] = (byte)(i / 4 / 30 * 12 + 20); }
         var items = new List<LunaCapture.Editor.Annotation>
         {
             new LunaCapture.Editor.ArrowAnnotation { Color = 0xFFE5484D, Width = 4, From = new(30, 300), To = new(200, 120) },
@@ -152,6 +154,10 @@ unsafe
             new LunaCapture.Editor.StickerAnnotation { Kind = LunaCapture.Editor.StickerKind.Star, Center = new(560, 200), Size = 52 },
             new LunaCapture.Editor.NumberAnnotation { Number = 3, Color = 0xFFF76B15, Center = new(380, 250), Size = 34 },
             new LunaCapture.Editor.MosaicAnnotation { A = new(250, 300), B = new(360, 380), BlockSize = 12 },
+            new LunaCapture.Editor.PatchAnnotation { Color = 0xFF202024, A = new(470, 250), B = new(540, 300) },
+            new LunaCapture.Editor.ImageAnnotation { Image = piece, A = new(470.5f, 250), B = new(530.5f, 290) },
+            new LunaCapture.Editor.SpotlightAnnotation { A = new(20, 20), B = new(460, 390) },
+            new LunaCapture.Editor.SpotlightAnnotation { A = new(480, 20), B = new(620, 120) },
         };
         var expected = LunaCapture.Editor.Composer.Compose(orig, items);
 
@@ -172,6 +178,16 @@ unsafe
         var all = LunaCapture.Services.HistoryStore.LoadAll();
         log.AppendLine($"최대 3개 설정 후 5건 추가 → 남은 기록 {all.Count}개 (최신: {string.Join(",", all.Select(e => e.Kind))}), 처음 사진 기록 남아 있음: {all.Any(e => e.Id == id)}");
         File.WriteAllText(args[1], log.ToString());
+        GdiPlus.Shutdown();
+        return;
+    }
+    if (args.Length == 2 && args[0] == "--clipboard-read")
+    {
+        // 개발용: 지금 클립보드의 그림을 읽어 PNG로 저장 (붙여넣기 시험)
+        GdiPlus.Startup();
+        var img = LunaCapture.Services.ClipboardService.GetImage(0);
+        File.WriteAllText(args[1] + ".txt", img == null ? "없음" : $"{img.Width}x{img.Height} alpha0={img.Bgra.Where((b, i) => i % 4 == 3 && b == 0).Count()}");
+        if (img != null) LunaCapture.Graphics.PngEncoder.Save(img, args[1]);
         GdiPlus.Shutdown();
         return;
     }
@@ -204,7 +220,7 @@ unsafe
             return o == null ? null : new LunaCapture.Editor.EditorDocument
             {
                 Original = o, Items = LunaCapture.Services.HistoryStore.LoadItems(e), HistoryId = e.Id,
-                Save = (img, its) => LunaCapture.Services.HistoryStore.UpdateImage(e.Id, img, its, null),
+                Save = (img, orig, its) => LunaCapture.Services.HistoryStore.UpdateImage(e.Id, img, its, null, orig),
             };
         }
         var first = Open(LunaCapture.Services.HistoryStore.LoadAll()[0])!;
