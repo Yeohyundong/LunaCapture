@@ -32,6 +32,9 @@ internal sealed partial class TrayApp
     /// <summary>기록의 사진을 편집기로 다시 연다: 원본 + 그려 둔 주석(다시 고칠 수 있음).</summary>
     void EditFromHistory(HistoryEntry e)
     {
+        // 같은 기록을 다시 열어도 방금 편집한 내용이 반영되도록 저장 후 읽는다.
+        _editor?.Close();
+        e = HistoryStore.LoadAll().FirstOrDefault(x => x.Id == e.Id) ?? e;
         var doc = OpenEntryAsDocument(e);
         if (doc == null)
         {

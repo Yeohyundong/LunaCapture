@@ -29,6 +29,7 @@ internal sealed unsafe partial class TrayApp : NativeWindow
     readonly uint _taskbarCreatedMsg;
     nint _icon;
     bool _busy;
+    EditorWindow? _editor;
     string? _lastSavedPath;
 
     public TrayApp()
@@ -143,6 +144,8 @@ internal sealed unsafe partial class TrayApp : NativeWindow
         }
 
         string? path = null, histId = null;
+        // 이전 편집본을 먼저 저장한다. 이후 새 캡처를 복사해야 클립보드도 최신 캡처를 유지한다.
+        if (Settings.OpenEditor) _editor?.Close();
         bool copied = false;
         try
         {
@@ -212,7 +215,8 @@ internal sealed unsafe partial class TrayApp : NativeWindow
     /// <summary>편집 창을 연다. 캡처 기록이 켜져 있으면 오른쪽에 기록 패널이 붙는다.</summary>
     void OpenEditor(EditorDocument doc, string status)
     {
-        _ = new EditorWindow(doc, status, () => MemoryTrimmer.Trim(),
+        _editor?.Close();
+        _editor = new EditorWindow(doc, status, () => { _editor = null; MemoryTrimmer.Trim(); },
             Settings.HistoryMax > 0 ? OpenEntryAsDocument : null);
     }
 

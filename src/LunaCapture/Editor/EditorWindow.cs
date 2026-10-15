@@ -1352,7 +1352,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         Invalidate();
     }
 
-    void Close()
+    internal void Close()
     {
         if (_closing) return;
         _closing = true;
