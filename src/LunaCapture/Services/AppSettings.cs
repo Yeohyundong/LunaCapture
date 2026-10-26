@@ -29,6 +29,11 @@ internal sealed class AppSettings
     public int ShapeStyle { get; set; }
     /// <summary>편집 창 오른쪽 캡처 기록 패널을 보일지</summary>
     public bool EditorHistoryPanel { get; set; } = true;
+    public int? EditorLeft { get; set; }
+    public int? EditorTop { get; set; }
+    public int EditorWidth { get; set; }
+    public int EditorHeight { get; set; }
+    public bool EditorMaximized { get; set; }
 
     /// <summary>마지막으로 고른 녹화 형식: 0 = GIF, 1 = 동영상(MP4)</summary>
     public int RecordFormat { get; set; }

@@ -78,9 +78,12 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             _panel.Load();
         }
 
-        // 커서가 있는 모니터에 띄운다. DPI를 알아야 크기를 정할 수 있어 먼저 숨긴 채로 만든다.
+        // 저장한 위치의 모니터에 복원한다. 첫 실행만 커서 위치를 따른다.
         POINT cursor;
         User32.GetCursorPos(&cursor);
+        var settings = AppSettings.Current;
+        bool restore = settings.EditorLeft.HasValue && settings.EditorTop.HasValue && settings.EditorWidth > 0 && settings.EditorHeight > 0;
+        if (restore) cursor = new POINT { X = settings.EditorLeft!.Value, Y = settings.EditorTop!.Value };
         var mi = new MONITORINFO { cbSize = (uint)sizeof(MONITORINFO) };
         User32.GetMonitorInfoW(User32.MonitorFromPoint(cursor, Win.MONITOR_DEFAULTTONEAREST), &mi);
         var work = mi.rcWork;
@@ -94,9 +97,16 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
 
         ApplyScale(User32.GetDpiForWindow(Handle) / 96f);
         _toolbar.Status = status;
-        PlaceWindow(work);
+        if (restore)
+        {
+            int w = Math.Min(settings.EditorWidth, work.Width), h = Math.Min(settings.EditorHeight, work.Height);
+            int x = Math.Clamp(settings.EditorLeft!.Value, work.Left, work.Right - w);
+            int y = Math.Clamp(settings.EditorTop!.Value, work.Top, work.Bottom - h);
+            User32.SetWindowPos(Handle, 0, x, y, w, h, Win.SWP_NOZORDER | Win.SWP_NOACTIVATE);
+        }
+        else PlaceWindow(work);
 
-        User32.ShowWindow(Handle, Win.SW_SHOW);
+        User32.ShowWindow(Handle, restore && settings.EditorMaximized ? 3 /* SW_MAXIMIZE */ : Win.SW_SHOW);
         User32.ForceForeground(Handle);
         User32.SetTimer(Handle, StatusTimer, 3000, 0);
     }
@@ -1352,10 +1362,45 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         Invalidate();
     }
 
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    struct EditorPlacement
+    {
+        public uint Length, Flags, Show;
+        public POINT Min, Max;
+        public RECT Normal;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern int GetWindowPlacement(nint hwnd, ref EditorPlacement placement);
+
+    void SaveWindowPlacement()
+    {
+        var placement = new EditorPlacement { Length = (uint)sizeof(EditorPlacement) };
+        if (GetWindowPlacement(Handle, ref placement) == 0) return;
+        var r = placement.Normal;
+        if (r.Width <= 0 || r.Height <= 0) return;
+        RECT current;
+        if (User32.GetWindowRect(Handle, &current) == 0) return;
+        // WINDOWPLACEMENT uses workspace coordinates; settings store screen coordinates.
+        var point = User32.IsIconic(Handle) != 0
+            ? new POINT { X = r.Left + r.Width / 2, Y = r.Top + r.Height / 2 }
+            : new POINT { X = current.Left + current.Width / 2, Y = current.Top + current.Height / 2 };
+        var monitor = new MONITORINFO { cbSize = (uint)sizeof(MONITORINFO) };
+        User32.GetMonitorInfoW(User32.MonitorFromPoint(point, Win.MONITOR_DEFAULTTONEAREST), &monitor);
+        var settings = AppSettings.Current;
+        settings.EditorLeft = r.Left + monitor.rcWork.Left - monitor.rcMonitor.Left;
+        settings.EditorTop = r.Top + monitor.rcWork.Top - monitor.rcMonitor.Top;
+        settings.EditorWidth = r.Width;
+        settings.EditorHeight = r.Height;
+        settings.EditorMaximized = placement.Show == 3 || (placement.Flags & 2) != 0;
+        AppSettings.Save();
+    }
+
     internal void Close()
     {
         if (_closing) return;
         _closing = true;
+        SaveWindowPlacement();
         if (_dragging) OnMouseUp();
         try { CommitText(); } catch (Exception ex) { Log.Error(ex); }
         SaveIfChanged();
