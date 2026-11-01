@@ -2,7 +2,7 @@
 
 namespace LunaCapture.Editor;
 
-internal enum ItemKind { Tool, Color, Thickness, FontSize, Undo, Redo, History, Copy, SaveAs, Done }
+internal enum ItemKind { Tool, Color, Thickness, FontSize, Undo, Redo, History, Copy, SaveAs, OpenFolder, Done }
 
 internal struct ToolbarItem
 {
@@ -97,12 +97,13 @@ internal sealed class Toolbar : IDisposable
 
         // 오른쪽 정렬 버튼들
         int tw = S(58);
-        int rightWidth = tw * 4 + gap * 3 + S(8);
+        int rightWidth = tw * 4 + S(90) + gap * 4 + S(8);
         int rx = Math.Max(leftEnd + S(24), width - rightWidth);
         x = rx;
         Add(ItemKind.History, 0, tw, "캡처 기록 패널 열기/닫기");
         Add(ItemKind.Copy, 0, tw, "클립보드에 복사 (Ctrl+C)");
         Add(ItemKind.SaveAs, 0, tw, "다른 이름으로 저장 (Ctrl+S)");
+        Add(ItemKind.OpenFolder, 0, S(90), "캡처 사진 저장 폴더 열기");
         Add(ItemKind.Done, 0, tw, "완료 (Enter) · 편집 내용이 자동 저장돼요");
 
         MinWidth = leftEnd + S(24) + rightWidth;
@@ -213,6 +214,9 @@ internal sealed class Toolbar : IDisposable
                 break;
             case ItemKind.SaveAs:
                 CenterText(g, "저장", _label!, fg, b);
+                break;
+            case ItemKind.OpenFolder:
+                CenterText(g, "저장 폴더", _label!, fg, b);
                 break;
             case ItemKind.Done:
                 CenterText(g, "완료", _label!, 0xFFFFFFFF, b);

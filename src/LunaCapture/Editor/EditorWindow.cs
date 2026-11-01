@@ -524,6 +524,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             case ItemKind.Redo: Redo(); break;
             case ItemKind.Copy: if (_marquee != null) CopyRegion(); else CopyToClipboard(); break;
             case ItemKind.SaveAs: if (_marquee != null) SaveRegion(); else SaveAs(); break;
+            case ItemKind.OpenFolder: OpenSaveFolder(); break;
             case ItemKind.Done: Close(); break;
             case ItemKind.History:
                 if (_panel == null) { ShowStatus("이 편집 창에서는 기록을 볼 수 없어요"); break; }
@@ -1334,6 +1335,22 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
     {
         bool ok = ClipboardService.SetImage(Handle, Composite());
         ShowStatus(ok ? "클립보드에 복사했어요" : "클립보드 복사에 실패했어요");
+    }
+
+    void OpenSaveFolder()
+    {
+        try
+        {
+            string folder = AppSettings.Current.ImageFolderOrDefault;
+            Directory.CreateDirectory(folder);
+            if (Shell32.ShellExecuteW(Handle, "open", folder, null, null, Win.SW_SHOW) <= 32)
+                ShowStatus("저장 폴더를 열지 못했어요");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+            ShowStatus("저장 폴더를 열지 못했어요");
+        }
     }
 
     void SaveAs() => SaveImageAs(Composite());
