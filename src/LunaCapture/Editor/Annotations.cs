@@ -90,7 +90,7 @@ internal sealed class ArrowAnnotation : Annotation
     public override void Offset(float dx, float dy) { From = new(From.X + dx, From.Y + dy); To = new(To.X + dx, To.Y + dy); }
 }
 
-internal enum ShapeKind { Rect, Ellipse }
+internal enum ShapeKind { Rect, Ellipse, RoundedRect }
 internal enum FillStyle { Outline, Solid, Tint }
 
 /// <summary>
@@ -106,7 +106,7 @@ internal sealed class RectAnnotation : TextAnnotation
     public override bool IsMeaningful => MathF.Abs(A.X - B.X) > 3 && MathF.Abs(A.Y - B.Y) > 3;
 
     RectF Box => Geo.FromPoints(A, B);
-    float Radius => Fill == FillStyle.Outline ? 0 : MathF.Min(10, MathF.Min(Box.Width, Box.Height) * 0.12f);
+    float Radius => Shape == ShapeKind.RoundedRect ? MathF.Min(16, MathF.Min(Box.Width, Box.Height) * 0.2f) : 0;
 
     // 채운 도형은 배경에 맞춰 글자색 자동, 테두리·반투명은 도형 색
     protected override uint TextColor => Fill == FillStyle.Solid ? Stickers.ContrastText(Color) : Color;
@@ -116,16 +116,26 @@ internal sealed class RectAnnotation : TextAnnotation
         var b = Box;
         if (Shape == ShapeKind.Ellipse)
         {
-            if (Fill != FillStyle.Outline) g.FillEllipse(Fill == FillStyle.Solid ? Color : (Color & 0x00FFFFFF) | 0x50000000, b.X, b.Y, b.Width, b.Height);
+            if (Fill != FillStyle.Outline) g.FillEllipse(Fill == FillStyle.Solid ? Color : (Color & 0x00FFFFFF) | (uint)((Color >> 24) * 80 / 255) << 24, b.X, b.Y, b.Width, b.Height);
             if (Fill != FillStyle.Solid) g.Ellipse(Color, Width, b.X, b.Y, b.Width, b.Height);
         }
         else
         {
-            if (Fill == FillStyle.Outline) g.Rect(Color, Width, b.X, b.Y, b.Width, b.Height);
+            if (Fill == FillStyle.Outline)
+            {
+                if (Radius > 0) g.RoundRect(Color, Width, b.X, b.Y, b.Width, b.Height, Radius);
+                else g.Rect(Color, Width, b.X, b.Y, b.Width, b.Height);
+            }
             else
             {
-                g.FillRoundRect(Fill == FillStyle.Solid ? Color : (Color & 0x00FFFFFF) | 0x50000000, b.X, b.Y, b.Width, b.Height, Radius);
-                if (Fill == FillStyle.Tint) g.RoundRect(Color, Width, b.X, b.Y, b.Width, b.Height, Radius);
+                uint fillColor = Fill == FillStyle.Solid ? Color : (Color & 0x00FFFFFF) | (uint)((Color >> 24) * 80 / 255) << 24;
+                if (Radius > 0) g.FillRoundRect(fillColor, b.X, b.Y, b.Width, b.Height, Radius);
+                else g.FillRect(fillColor, b.X, b.Y, b.Width, b.Height);
+                if (Fill == FillStyle.Tint)
+                {
+                    if (Radius > 0) g.RoundRect(Color, Width, b.X, b.Y, b.Width, b.Height, Radius);
+                    else g.Rect(Color, Width, b.X, b.Y, b.Width, b.Height);
+                }
             }
         }
         DrawCenteredText(g);
@@ -396,14 +406,62 @@ internal sealed class NumberAnnotation : Annotation
     public int Number;
     public PointF Center;
     public float Size;
+    public bool Square;
+    public bool Glow;
+    public PointF End;
+    public bool HasBox;
 
     public override bool IsMeaningful => true;
 
-    public override void Draw(GdiSurface target, Gfx g) => Stickers.Number(g, Number, Center.X, Center.Y, Size, Color);
+    public float BadgeSize => !HasBox ? Size : MathF.Min(Size, MathF.Max(2,
+        MathF.Min(MathF.Abs(End.X - Center.X), MathF.Abs(End.Y - Center.Y)) - MathF.Max(2, Width) - (Square ? 0 : 4)));
 
-    public override RectF Bounds(Gfx g) => new(Center.X - Size / 2, Center.Y - Size / 2, Size, Size);
-    public override bool HitTest(PointF p, float tol, Gfx g) => Geo.SegmentDistance(p, Center, Center) <= Size / 2 + tol;
-    public override void Offset(float dx, float dy) => Center = new(Center.X + dx, Center.Y + dy);
+    public PointF BadgeCenter
+    {
+        get
+        {
+            if (!HasBox) return Center;
+            float margin = Square ? 0 : 2;
+            float offset = BadgeSize / 2 + margin + MathF.Max(2, Width) / 2;
+            return new(Center.X + (End.X >= Center.X ? offset : -offset), Center.Y + (End.Y >= Center.Y ? offset : -offset));
+        }
+    }
+
+    public override void Draw(GdiSurface target, Gfx g)
+    {
+        if (HasBox)
+        {
+            var box = Geo.FromPoints(Center, End);
+            if (Glow) Stickers.NumberOutlineGlow(g, box, MathF.Max(2, Width), Color);
+            if (Glow) g.Rect(Stickers.WithOpacity((Color & 0xFF000000) | 0xFFFFFF, 0.95f), MathF.Max(2, Width) + 3, box.X, box.Y, box.Width, box.Height);
+            g.Rect(Color, MathF.Max(2, Width), box.X, box.Y, box.Width, box.Height);
+        }
+        var c = BadgeCenter;
+        Stickers.Number(g, Number, c.X, c.Y, BadgeSize, Color, Square, Glow);
+    }
+
+    public override RectF Bounds(Gfx g)
+    {
+        var c = BadgeCenter;
+        var badge = new RectF(c.X - BadgeSize / 2, c.Y - BadgeSize / 2, BadgeSize, BadgeSize);
+        if (!HasBox) return badge;
+        var b = Geo.FromPoints(Center, End);
+        float x = MathF.Min(b.X, badge.X), y = MathF.Min(b.Y, badge.Y);
+        return new(x, y, MathF.Max(b.X + b.Width, badge.X + badge.Width) - x, MathF.Max(b.Y + b.Height, badge.Y + badge.Height) - y);
+    }
+    public bool HitBadge(PointF p, float tol)
+    {
+        var c = BadgeCenter;
+        return Square ? Geo.Inside(new(c.X - BadgeSize / 2 - tol, c.Y - BadgeSize / 2 - tol, BadgeSize + tol * 2, BadgeSize + tol * 2), p)
+            : Geo.SegmentDistance(p, c, c) <= BadgeSize / 2 + tol;
+    }
+    public override bool HitTest(PointF p, float tol, Gfx g) => HitBadge(p, tol) || (HasBox && Geo.NearEdge(Geo.FromPoints(Center, End), p, tol + MathF.Max(2, Width)));
+
+    public override void Offset(float dx, float dy)
+    {
+        Center = new(Center.X + dx, Center.Y + dy);
+        End = new(End.X + dx, End.Y + dy);
+    }
 }
 
 internal sealed unsafe class MosaicAnnotation : Annotation

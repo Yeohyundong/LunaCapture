@@ -27,6 +27,11 @@ internal sealed class AppSettings
     public int Sticker { get; set; }
     public int BubbleTail { get; set; }
     public int ShapeStyle { get; set; }
+    public uint SelectedColor { get; set; } = 0xFFE5484D;
+    public List<uint> CustomColors { get; set; } = [];
+    public int RecommendedPalette { get; set; }
+    public bool NumberSquare { get; set; }
+    public bool NumberGlow { get; set; }
     /// <summary>편집 창 오른쪽 캡처 기록 패널을 보일지</summary>
     public bool EditorHistoryPanel { get; set; } = true;
     public int? EditorLeft { get; set; }
@@ -63,7 +68,7 @@ internal sealed class AppSettings
         : VideoFolder;
 
     static readonly string FilePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LunaCapture", "settings.json");
+        Environment.GetEnvironmentVariable("LUNA_SETTINGS_DIR") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LunaCapture"), "settings.json");
 
     public static AppSettings Current { get; private set; } = new();
 

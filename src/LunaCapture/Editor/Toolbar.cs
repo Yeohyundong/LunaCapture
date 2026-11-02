@@ -37,7 +37,8 @@ internal sealed class Toolbar : IDisposable
 
     // 그리기에 필요한 현재 상태 (편집기가 채워 넣음)
     public Tool CurrentTool;
-    public int ColorIndex, ThicknessIndex;
+    public int ThicknessIndex;
+    public uint CurrentColor = 0xFFE5484D;
     public float TextSize = 24;
     public bool CanUndo, CanRedo;
     public int HoverIndex = -1;
@@ -81,7 +82,7 @@ internal sealed class Toolbar : IDisposable
         Add(ItemKind.Tool, (int)Tool.Sticker, btn, "스티커 (S)");
         Add(ItemKind.Tool, (int)Tool.Mosaic, btn, "모자이크 (M)");
         x += sep;
-        for (int i = 0; i < Palette.Length; i++) Add(ItemKind.Color, i, S(26), PaletteNames[i]);
+        Add(ItemKind.Color, 0, S(36), "색상 팔레트 · 맞춤 색상 · 추천 색상");
         x += sep;
         Add(ItemKind.Thickness, 0, S(30), "얇게 (1)");
         Add(ItemKind.Thickness, 1, S(30), "보통 (2)");
@@ -180,13 +181,11 @@ internal sealed class Toolbar : IDisposable
             case ItemKind.Color:
             {
                 float d = S(hover ? 18 : 16);
-                if (it.Value == ColorIndex)
-                {
-                    float ring = S(22);
-                    g.Ellipse(0xFFFFFFFF, S(2), cx - ring / 2, cy - ring / 2, ring, ring);
-                }
-                g.FillEllipse(Palette[it.Value], cx - d / 2, cy - d / 2, d, d);
-                if (Palette[it.Value] == 0xFF1C1C1C) g.Ellipse(0xFF5A5A64, 1, cx - d / 2, cy - d / 2, d, d);
+                float ring = S(22);
+                g.Ellipse(0xFFFFFFFF, S(2), cx - ring / 2, cy - ring / 2, ring, ring);
+                g.FillEllipse(0xFFBBBBBB, cx - d / 2, cy - d / 2, d, d);
+                g.FillEllipse(CurrentColor, cx - d / 2, cy - d / 2, d, d);
+                if (CurrentColor == 0xFF1C1C1C) g.Ellipse(0xFF5A5A64, 1, cx - d / 2, cy - d / 2, d, d);
                 break;
             }
 
@@ -316,7 +315,7 @@ internal sealed class Toolbar : IDisposable
     /// <summary>형광펜: 굵은 몸통 + 비스듬한 납작 심(현재 색) + 아래에 반투명 칠한 자국.</summary>
     void Marker(Gfx g, uint fg, float cx, float cy, float r)
     {
-        uint ink = Palette[ColorIndex] == 0xFF1C1C1C ? 0xFFFFC53D : Palette[ColorIndex];
+        uint ink = CurrentColor == 0xFF1C1C1C ? 0xFFFFC53D : CurrentColor;
         g.Line((ink & 0x00FFFFFF) | 0x99000000, S(5), cx - r * 1.05f, cy + r * 0.95f, cx + r * 0.2f, cy + r * 0.95f);
         float L = r * 2.0f, W = r * 0.95f, tip = r * 0.55f;
         float x0 = -L / 2 - r * 0.15f, x1 = x0 + tip, x3 = L / 2, h = W / 2;

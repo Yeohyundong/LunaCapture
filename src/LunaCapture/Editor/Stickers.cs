@@ -236,11 +236,31 @@ internal static class Stickers
 
     // ───────────────────────── 번호 배지 ─────────────────────────
 
-    public static void Number(Gfx g, int number, float cx, float cy, float size, uint color)
+    public static uint WithOpacity(uint color, float opacity) => (color & 0xFFFFFF) | (uint)MathF.Round((color >> 24) * opacity) << 24;
+
+    public static void NumberOutlineGlow(Gfx g, RectF box, float width, uint color)
     {
-        RoundBadge(g, cx, cy, size, Mix(color, White, 0.28f), Mix(color, 0xFF000000, 0.12f));
+        // Several low-opacity strokes form a soft edge without obscuring the captured content.
+        float spread = Math.Clamp(width, 2f, 4f);
+        for (int i = 3; i >= 1; i--)
+        {
+            uint shadow = WithOpacity((color & 0xFF000000), 0.10f * (4 - i));
+            g.Rect(shadow, width + spread * i * 2, box.X, box.Y + spread * 0.6f, box.Width, box.Height);
+            g.Rect(WithOpacity(Mix(color, 0xFFFFFFFF, 0.6f), 0.10f * (4 - i)), width + spread * i, box.X, box.Y, box.Width, box.Height);
+        }
+        g.Rect(WithOpacity(color, 0.9f), width + 3, box.X, box.Y, box.Width, box.Height);
+        g.Rect(WithOpacity(0xFF000000, (color >> 24) / 255f * 0.6f), width + 1.5f, box.X, box.Y, box.Width, box.Height);
+    }
+
+    public static void Number(Gfx g, int number, float cx, float cy, float size, uint color, bool square = false, bool glow = false)
+    {
+        var box = new RectF(cx - size / 2, cy - size / 2, size, size);
+        if (glow && square) NumberOutlineGlow(g, box, MathF.Max(1, size * 0.06f), color);
+        if (glow && square) g.FillRect(WithOpacity((color & 0xFF000000) | 0xFFFFFF, 0.95f), box.X - 1.5f, box.Y - 1.5f, box.Width + 3, box.Height + 3);
+        if (square) g.FillRect(color, cx - size / 2, cy - size / 2, size, size);
+        else g.FillEllipse(color, cx - size / 2, cy - size / 2, size, size);
         string text = number.ToString();
-        Glyph(g, text, cx, cy, size * (text.Length > 1 ? 0.42f : 0.5f), ContrastText(color));
+        Glyph(g, text, cx, cy, size * MathF.Min(0.5f, 0.82f / text.Length), (ContrastText(color) & 0xFFFFFF) | (color & 0xFF000000));
     }
 
     // ───────────────────────── 말풍선 ─────────────────────────

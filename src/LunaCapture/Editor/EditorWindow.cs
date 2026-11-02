@@ -50,7 +50,8 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
     static StickerKind s_sticker = (StickerKind)Math.Clamp(Services.AppSettings.Current.Sticker, 0, Stickers.All.Length - 1); // 마지막으로 고른 스티커
     static readonly float[] NumberSizes = [24f, 32f, 44f];
     static readonly float[] StickerSizes = [36f, 52f, 72f];
-    int _colorIndex, _thickness = 1;
+    uint _color = AppSettings.Current.SelectedColor;
+    int _thickness = 1;
     float _scale = 1f;
     float _zoom = 1f;
     int _imgX, _imgY, _dispW, _dispH;
@@ -350,6 +351,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             case ArrowAnnotation a: a.To = p; break;
             case RectAnnotation r: r.B = p; break;
             case MosaicAnnotation m: m.B = p; break;
+            case NumberAnnotation n: n.End = p; n.HasBox = MathF.Abs(p.X - n.Center.X) > 4 && MathF.Abs(p.Y - n.Center.Y) > 4; break;
             case PenAnnotation pen: pen.Add(p); break;
         }
         RenderActive();
@@ -357,6 +359,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
 
     void OnMouseDown(int x, int y)
     {
+        if (!FinishNumberEdit(true)) return;
         if (y < _toolbar.Height)
         {
             int i = _toolbar.HitTest(x, y);
@@ -388,7 +391,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         }
         if (TrySelectAt(x, y, p)) return;
 
-        uint color = Toolbar.Palette[_colorIndex];
+        uint color = _color;
         float width = LineWidths[_thickness] * _scale;
 
         switch (_tool)
@@ -412,7 +415,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
                 bool hl = _tool == Tool.Highlighter;
                 var pen = new PenAnnotation
                 {
-                    Color = hl ? (color & 0x00FFFFFF) | 0x70000000 : color,
+                    Color = hl ? (color & 0x00FFFFFF) | ((color >> 24) * 112 / 255) << 24 : color,
                     Width = hl ? (LineWidths[_thickness] * 3 + 8) * _scale : width,
                     Highlighter = hl,
                 };
@@ -427,8 +430,8 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
                 StartBubble(p);
                 return;
             case Tool.Number:
-                Commit(new NumberAnnotation { Number = NextNumber(), Center = p, Size = NumberSizes[_thickness] * _scale, Color = color });
-                return;
+                _active = new NumberAnnotation { Number = NextNumber(_items), Center = p, End = p, Size = NumberSizes[_thickness] * _scale, Color = color, Width = width, Square = AppSettings.Current.NumberSquare, Glow = AppSettings.Current.NumberGlow };
+                break;
             case Tool.Sticker:
                 Commit(new StickerAnnotation { Kind = s_sticker, Center = p, Size = StickerSizes[_thickness] * _scale });
                 return;
@@ -517,8 +520,12 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         switch (item.Kind)
         {
             case ItemKind.Tool: SetTool((Tool)item.Value); break;
-            case ItemKind.Color: _colorIndex = item.Value; RecolorActiveText(); RestyleSelected(color: true); break;
-            case ItemKind.Thickness: _thickness = item.Value; RecolorActiveText(); RestyleSelected(color: false); break;
+            case ItemKind.Color: OpenColorPalette(); break;
+            case ItemKind.Thickness:
+                _thickness = item.Value;
+                if (Editing is RectAnnotation r) { r.Width = LineWidths[_thickness] * _scale; RenderActive(); }
+                RestyleSelected(color: false);
+                break;
             case ItemKind.FontSize: if (item.Value != 0) ChangeTextSize(item.Value * 2); break;
             case ItemKind.Undo: Undo(); break;
             case ItemKind.Redo: Redo(); break;
@@ -538,6 +545,14 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
 
     void OnKeyDown(int vk)
     {
+        if (_numberEditing != null)
+        {
+            if (vk == Win.VK_RETURN) FinishNumberEdit(true);
+            else if (vk == Win.VK_ESCAPE) FinishNumberEdit(false);
+            else if (vk == 'A' && Win.IsKeyDown(Win.VK_CONTROL)) { _numberReplace = true; Invalidate(); }
+            else if (vk == Win.VK_DELETE) { _numberDraft = ""; _numberReplace = false; Invalidate(); }
+            return;
+        }
         bool ctrl = Win.IsKeyDown(Win.VK_CONTROL);
         bool shift = Win.IsKeyDown(Win.VK_SHIFT);
 
@@ -635,7 +650,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         float size = _textSize * _scale;
         _active = new TextAnnotation
         {
-            Color = Toolbar.Palette[_colorIndex],
+            Color = _color,
             FontSize = size,
             Position = new PointF(p.X, p.Y - size * 0.65f),
         };
@@ -649,7 +664,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
     {
         _active = new BubbleAnnotation
         {
-            Color = Toolbar.Palette[_colorIndex],
+            Color = _color,
             FontSize = _textSize * _scale,
             Tail = p,
             Dir = s_tail,
@@ -660,23 +675,24 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
     }
 
     /// <summary>다음 번호 = 지금까지 찍은 번호 중 가장 큰 것 + 1 (되돌리기 하면 자연히 다시 줄어든다).</summary>
-    int NextNumber()
+    internal static int NextNumber(IEnumerable<Annotation> items)
     {
         int max = 0;
-        foreach (var a in _items)
+        foreach (var a in items)
             if (a is NumberAnnotation n && n.Number > max) max = n.Number;
-        return max + 1;
+        return max == int.MaxValue ? int.MaxValue : max + 1;
     }
 
     // ── 고르기 줄: 스티커(어떤 스티커) / 말풍선(꼬리 방향) 도구일 때 그 버튼 바로 아래에 뜸 ──
 
     static TailDir s_tail = (TailDir)Math.Clamp(Services.AppSettings.Current.BubbleTail, 0, Stickers.Tails.Length - 1); // 말풍선 꼬리 방향 (마지막 선택 기억)
 
-    // 도형 스타일: (모양, 채우기) 6가지
+    // 도형 스타일: (모양, 채우기) 9가지. 앞 6개의 순서는 기존 설정과 호환되도록 유지.
     static readonly (ShapeKind shape, FillStyle fill)[] ShapeStyles =
     [
         (ShapeKind.Rect, FillStyle.Outline), (ShapeKind.Rect, FillStyle.Solid), (ShapeKind.Rect, FillStyle.Tint),
         (ShapeKind.Ellipse, FillStyle.Outline), (ShapeKind.Ellipse, FillStyle.Solid), (ShapeKind.Ellipse, FillStyle.Tint),
+        (ShapeKind.RoundedRect, FillStyle.Outline), (ShapeKind.RoundedRect, FillStyle.Solid), (ShapeKind.RoundedRect, FillStyle.Tint),
     ];
     static int s_shapeStyle = Math.Clamp(Services.AppSettings.Current.ShapeStyle, 0, ShapeStyles.Length - 1);
     static ShapeKind s_shape => ShapeStyles[s_shapeStyle].shape;
@@ -687,18 +703,20 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
     {
         get
         {
+            if (_selected is NumberAnnotation || _active is NumberAnnotation) return 4;
             if (_selected is StickerAnnotation) return 1;
             if (_selected is BubbleAnnotation || _active is BubbleAnnotation) return 2;
             if (_selected is RectAnnotation || Editing is RectAnnotation) return 3;
             if (_selected != null || Editing != null) return 0;
-            return _tool switch { Tool.Sticker => 1, Tool.Bubble => 2, Tool.Rect => 3, _ => 0 };
+            return _tool switch { Tool.Sticker => 1, Tool.Bubble => 2, Tool.Rect => 3, Tool.Number => 4, _ => 0 };
         }
     }
 
     bool HasStrip => StripMode != 0;
-    int StripCount => StripMode switch { 1 => Stickers.All.Length, 2 => Stickers.Tails.Length, _ => ShapeStyles.Length };
+    int StripCount => StripMode switch { 1 => Stickers.All.Length, 2 => Stickers.Tails.Length, 4 => 3, _ => ShapeStyles.Length };
     int StripSelected => StripMode switch
     {
+        4 => _selected is NumberAnnotation sn ? (sn.Glow ? 2 : sn.Square ? 1 : 0) : AppSettings.Current.NumberGlow ? 2 : AppSettings.Current.NumberSquare ? 1 : 0,
         1 => Array.IndexOf(Stickers.All, _selected is StickerAnnotation st ? st.Kind : s_sticker),
         2 => Array.IndexOf(Stickers.Tails, _selected is BubbleAnnotation sb ? sb.Dir : _active is BubbleAnnotation ab ? ab.Dir : s_tail),
         _ => (_selected as RectAnnotation ?? Editing as RectAnnotation) is { } r
@@ -706,12 +724,15 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             : s_shapeStyle,
     };
 
+    static readonly int[] ShapeGrid = [0, 1, 2, 6, 7, 8, 3, 4, 5];
+
     RECT StripRect()
     {
         int cell = (int)(40 * _scale), pad = (int)(6 * _scale);
-        int w = cell * StripCount + pad * 2, h = cell + pad * 2;
+        int columns = StripMode == 3 ? 3 : StripCount;
+        int w = cell * columns + pad * 2, h = cell * (StripMode == 3 ? 3 : 1) + pad * 2;
         int x = (int)(8 * _scale);
-        var anchor = StripMode switch { 1 => Tool.Sticker, 2 => Tool.Bubble, _ => Tool.Rect };
+        var anchor = StripMode switch { 1 => Tool.Sticker, 2 => Tool.Bubble, 4 => Tool.Number, _ => Tool.Rect };
         foreach (var it in _toolbar.Items)
             if (it.Kind == ItemKind.Tool && it.Value == (int)anchor) x = Math.Max(x, it.Bounds.Left - w / 2 + it.Bounds.Width / 2);
         x = Math.Min(x, Math.Max(0, _clientW - w - (int)(8 * _scale)));
@@ -725,13 +746,22 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         var r = StripRect();
         if (x < r.Left || x >= r.Right || y < r.Top || y >= r.Bottom) return -1;
         int cell = (int)(40 * _scale), pad = (int)(6 * _scale);
-        int i = (x - r.Left - pad) / cell;
+        int col = (x - r.Left - pad) / cell, row = (y - r.Top - pad) / cell;
+        if (x < r.Left + pad || y < r.Top + pad || col >= (StripMode == 3 ? 3 : StripCount) || row >= (StripMode == 3 ? 3 : 1)) return -1;
+        int visual = row * 3 + col;
+        int i = StripMode == 3 ? ShapeGrid[visual] : col;
         return i >= 0 && i < StripCount ? i : -1;
     }
 
     void OnStripClick(int i)
     {
-        if (StripMode == 1)
+        if (StripMode == 4)
+        {
+            AppSettings.Current.NumberSquare = i > 0;
+            AppSettings.Current.NumberGlow = i == 2;
+            if (_selected is NumberAnnotation n) { PushUndo(); n.Square = i > 0; n.Glow = i == 2; RebuildCommitted(); }
+        }
+        else if (StripMode == 1)
         {
             s_sticker = Stickers.All[i];
             if (_selected is StickerAnnotation st) { PushUndo(); st.Kind = s_sticker; RebuildCommitted(); }
@@ -764,34 +794,24 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         int selected = StripSelected;
         for (int i = 0; i < StripCount; i++)
         {
-            float cx = r.Left + pad + cell * i + cell / 2f, cy = r.Top + pad + cell / 2f;
+            int visual = StripMode == 3 ? Array.IndexOf(ShapeGrid, i) : i;
+            float cx = r.Left + pad + cell * (StripMode == 3 ? visual % 3 : visual) + cell / 2f;
+            float cy = r.Top + pad + cell * (StripMode == 3 ? visual / 3 : 0) + cell / 2f;
             if (i == selected)
                 g.FillRoundRect(0xFF3D3A5C, cx - cell / 2f + 2, cy - cell / 2f + 2, cell - 4, cell - 4, 8 * _scale);
-            if (StripMode == 1)
+            if (StripMode == 4)
+            {
+                Stickers.Number(g, 1, cx, cy, cell * 0.65f, _color, i > 0, i == 2);
+            }
+            else if (StripMode == 1)
             {
                 Stickers.Draw(g, Stickers.All[i], cx, cy, cell * 0.7f);
             }
             else if (StripMode == 3)
             {
-                // 도형 스타일 미리보기
                 var (shape, fill) = ShapeStyles[i];
-                uint fg = i == selected ? 0xFFFFFFFF : 0xFFC8C8D0;
-                float bw = cell * 0.5f, bh = cell * 0.4f, x0 = cx - bw / 2, y0 = cy - bh / 2;
-                uint fillColor = fill == FillStyle.Solid ? fg : (fg & 0x00FFFFFF) | 0x50000000;
-                if (shape == ShapeKind.Ellipse)
-                {
-                    if (fill != FillStyle.Outline) g.FillEllipse(fillColor, x0, y0, bw, bh);
-                    if (fill != FillStyle.Solid) g.Ellipse(fg, 1.6f * _scale, x0, y0, bw, bh);
-                }
-                else
-                {
-                    if (fill == FillStyle.Outline) g.Rect(fg, 1.6f * _scale, x0, y0, bw, bh);
-                    else
-                    {
-                        g.FillRoundRect(fillColor, x0, y0, bw, bh, 3 * _scale);
-                        if (fill == FillStyle.Tint) g.RoundRect(fg, 1.6f * _scale, x0, y0, bw, bh, 3 * _scale);
-                    }
-                }
+                new RectAnnotation { A = new(cx - cell * 0.27f, cy - cell * 0.23f), B = new(cx + cell * 0.27f, cy + cell * 0.23f),
+                    Shape = shape, Fill = fill, Width = 1.6f * _scale, Color = i == selected ? 0xFFFFFFFF : 0xFFC8C8D0 }.Draw(null!, g);
             }
             else
             {
@@ -812,6 +832,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
 
     void OnChar(char c)
     {
+        if (_numberEditing != null) { NumberChar(c); return; }
         if (Editing is not { } t) return;
         switch (c)
         {
@@ -873,8 +894,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
     void RecolorActiveText()
     {
         if (Editing is not { } t) return;
-        t.Color = Toolbar.Palette[_colorIndex];
-        if (t is RectAnnotation r) r.Width = LineWidths[_thickness] * _scale;
+        t.Color = _color;
         RenderActive();
     }
 
@@ -1018,6 +1038,12 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         bool doubleClick = quickSecondClick && item == _lastClickItem;
         _lastClickItem = item;
 
+        if (doubleClick && item is NumberAnnotation number && number.HitBadge(p, 2 / _zoom))
+        {
+            _selected = number;
+            OpenNumberEditor(number);
+            return true;
+        }
         if (doubleClick && item is TextAnnotation t)
         {
             ReEdit(t);
@@ -1147,7 +1173,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             case SpotlightAnnotation sp: return Corners(sp.Box);
             case ArrowAnnotation ar: return [ar.From, ar.To];
             case StickerAnnotation st: return [new(st.Center.X + st.Size / 2, st.Center.Y + st.Size / 2)];
-            case NumberAnnotation n: return [new(n.Center.X + n.Size / 2, n.Center.Y + n.Size / 2)];
+            case NumberAnnotation n: return n.HasBox ? [n.End] : [new(n.Center.X + n.Size / 2, n.Center.Y + n.Size / 2)];
             default: return [];
         }
     }
@@ -1203,7 +1229,10 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             }
             case ArrowAnnotation ar: if (h == 0) ar.From = p; else ar.To = p; break;
             case StickerAnnotation st: st.Size = MathF.Max(12, 2 * MathF.Max(MathF.Abs(p.X - st.Center.X), MathF.Abs(p.Y - st.Center.Y))); break;
-            case NumberAnnotation n: n.Size = MathF.Max(12, 2 * MathF.Max(MathF.Abs(p.X - n.Center.X), MathF.Abs(p.Y - n.Center.Y))); break;
+            case NumberAnnotation n:
+                if (n.HasBox) n.End = p;
+                else n.Size = MathF.Max(12, 2 * MathF.Max(MathF.Abs(p.X - n.Center.X), MathF.Abs(p.Y - n.Center.Y)));
+                break;
         }
     }
 
@@ -1244,7 +1273,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
     {
         if (_selected == null) return;
         PushUndo();
-        uint c = Toolbar.Palette[_colorIndex];
+        uint c = _color;
         float width = LineWidths[_thickness] * _scale;
         switch (_selected)
         {
@@ -1256,7 +1285,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
                 if (color) t.Color = c;
                 break;
             case PenAnnotation pen:
-                if (color) pen.Color = pen.Highlighter ? (c & 0x00FFFFFF) | 0x70000000 : c;
+                if (color) pen.Color = pen.Highlighter ? (c & 0x00FFFFFF) | ((c >> 24) * 112 / 255) << 24 : c;
                 else pen.Width = pen.Highlighter ? (LineWidths[_thickness] * 3 + 8) * _scale : width;
                 break;
             case ArrowAnnotation:
@@ -1416,7 +1445,9 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
     internal void Close()
     {
         if (_closing) return;
+        if (!FinishNumberEdit(true)) FinishNumberEdit(false);
         _closing = true;
+        _options?.Destroy();
         SaveWindowPlacement();
         if (_dragging) OnMouseUp();
         try { CommitText(); } catch (Exception ex) { Log.Error(ex); }
@@ -1490,10 +1521,11 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             }
 
             _toolbar.CurrentTool = _tool;
-            _toolbar.ColorIndex = _colorIndex;
+            _toolbar.CurrentColor = _color;
             _toolbar.ThicknessIndex = _thickness;
             _toolbar.TextSize = CurrentTextSize;
             DrawSelection(g);
+            DrawNumberEdit(g);
             DrawMarquee(g);
             _toolbar.CanUndo = _undo.Count > 0 || Editing != null;
             _toolbar.CanRedo = _redo.Count > 0;

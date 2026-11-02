@@ -66,6 +66,27 @@ unsafe
         GdiPlus.Shutdown();
         return;
     }
+    if (args.Length == 2 && args[0] == "--number-style-sample")
+    {
+        GdiPlus.Startup(); UiFonts.LoadEmbedded();
+        using var surface = new LunaCapture.Graphics.GdiSurface(900, 360);
+        using (var g = new Gfx(surface.Dc))
+        {
+            for (int y = 0; y < 360; y += 20) for (int x = 0; x < 900; x += 20)
+            {
+                uint[] palette = [0xFF434349, 0xFFF3E8D5, 0xFFACAFB8, 0xFF7E9F8A, 0xFF8F6D85, 0xFFD39568];
+                g.FillRect(palette[(x / 20 * 3 + y / 20) % palette.Length], x, y, 20, 20);
+            }
+            for (int style = 0; style < 3; style++)
+            {
+                var n = new LunaCapture.Editor.NumberAnnotation { Number = style + 1, Center = new(30 + style * 300, 55), End = new(275 + style * 300, 320), Size = 34, Width = 4, Color = 0xFFFF2020, Square = style > 0, Glow = style == 2, HasBox = true };
+                n.Draw(surface, g);
+            }
+        }
+        Gdi32.GdiFlush();
+        LunaCapture.Graphics.PngEncoder.Save(surface.Crop(new RECT(0, 0, 900, 360)), args[1]);
+        GdiPlus.Shutdown(); return;
+    }
     if (args.Length == 2 && args[0] == "--editor-sample")
     {
         // 개발용: 편집기 툴바와 스티커·번호·말풍선을 화면에 띄우지 않고 이미지로 그려 본다.
@@ -80,7 +101,7 @@ unsafe
             tb.SetScale(1f);
             tb.Layout(w);
             tb.CurrentTool = LunaCapture.Editor.Tool.Rect;
-            tb.ColorIndex = 0;
+            tb.CurrentColor = 0xFFE5484D;
             tb.ThicknessIndex = 1;
             tb.Draw(g, w);
             // 캡처 이미지처럼 밝은 바탕
@@ -152,13 +173,16 @@ unsafe
             new LunaCapture.Editor.TextAnnotation { Color = 0xFFFFFFFF, Position = new(480, 40), Text = "텍스트", FontSize = 24 },
             new LunaCapture.Editor.BubbleAnnotation { Color = 0xFF8B7CF6, Tail = new(500, 330), Dir = LunaCapture.Editor.TailDir.BottomRight, Text = "말풍선", FontSize = 20 },
             new LunaCapture.Editor.StickerAnnotation { Kind = LunaCapture.Editor.StickerKind.Star, Center = new(560, 200), Size = 52 },
-            new LunaCapture.Editor.NumberAnnotation { Number = 3, Color = 0xFFF76B15, Center = new(380, 250), Size = 34 },
+            new LunaCapture.Editor.NumberAnnotation { Number = 3, Color = 0xFFF76B15, Center = new(380, 250), Size = 34, Square = true, Glow = true, HasBox = true, End = new(450, 290), Width = 3 },
             new LunaCapture.Editor.MosaicAnnotation { A = new(250, 300), B = new(360, 380), BlockSize = 12 },
             new LunaCapture.Editor.PatchAnnotation { Color = 0xFF202024, A = new(470, 250), B = new(540, 300) },
             new LunaCapture.Editor.ImageAnnotation { Image = piece, A = new(470.5f, 250), B = new(530.5f, 290) },
             new LunaCapture.Editor.SpotlightAnnotation { A = new(20, 20), B = new(460, 390) },
             new LunaCapture.Editor.SpotlightAnnotation { A = new(480, 20), B = new(620, 120) },
         };
+        foreach (var shape in Enum.GetValues<LunaCapture.Editor.ShapeKind>())
+            foreach (var fill in Enum.GetValues<LunaCapture.Editor.FillStyle>())
+                items.Add(new LunaCapture.Editor.RectAnnotation { A = new(30 + (int)fill * 65, 40 + (int)shape * 65), B = new(85 + (int)fill * 65, 90 + (int)shape * 65), Shape = shape, Fill = fill, Color = 0x9F0090FF, Width = 3 });
         var expected = LunaCapture.Editor.Composer.Compose(orig, items);
 
         LunaCapture.Services.AppSettings.Current.HistoryMax = 3;
@@ -172,6 +196,40 @@ unsafe
         for (int i = 0; i < expected.Bgra.Length; i++) if (expected.Bgra[i] != actual.Bgra[i]) diff++;
         log.AppendLine($"주석 {items.Count}개 저장 → 다시 읽음 {loaded.Count}개, 종류: {string.Join(",", loaded.Select(a => a.GetType().Name.Replace("Annotation", "")))}");
         log.AppendLine($"원본+주석 다시 합성: 다른 바이트 {diff}개 / {expected.Bgra.Length}");
+        if (diff != 0 || loaded.Count != items.Count) throw new Exception("주석 저장·복원 불일치");
+        var badge = loaded.OfType<LunaCapture.Editor.NumberAnnotation>().Single();
+        if (!badge.Glow || !badge.Square || !badge.HasBox || badge.End.X != 450 || badge.Width != 3) throw new Exception("번호 영역 복원 실패");
+        badge.Offset(10, 20);
+        if (badge.End.X != 460 || badge.Center.X != 390 || !badge.HitBadge(badge.BadgeCenter, 0)) throw new Exception("번호 이동 실패");
+        foreach (int dx in new[] { -100, 100 }) foreach (int dy in new[] { -100, 100 })
+        {
+            badge.Center = new(200, 200); badge.End = new(200 + dx, 200 + dy);
+            foreach (bool square in new[] { false, true })
+            {
+                badge.Square = square;
+                var box = LunaCapture.Editor.Geo.FromPoints(badge.Center, badge.End);
+                var c = badge.BadgeCenter;
+                if (!LunaCapture.Editor.Geo.Inside(box, new(c.X - badge.BadgeSize / 2, c.Y - badge.BadgeSize / 2)) || !LunaCapture.Editor.Geo.Inside(box, new(c.X + badge.BadgeSize / 2, c.Y + badge.BadgeSize / 2))) throw new Exception("번호 배지 안쪽 배치 실패");
+            }
+        }
+        if (LunaCapture.Editor.ColorPaletteWindow.Hsv(0, 1, 1, 128) != 0x80FF0000 || LunaCapture.Editor.ColorPaletteWindow.Hsv(120, 1, 1) != 0xFF00FF00) throw new Exception("HSV 변환 실패");
+        var oldBadge = LunaCapture.Editor.AnnotationJson.FromDto(new LunaCapture.Editor.AnnotationDto { Type = "number", Number = 1, Size = 32, Pts = [10, 20] }) as LunaCapture.Editor.NumberAnnotation;
+        if (oldBadge == null || oldBadge.Square || oldBadge.HasBox) throw new Exception("이전 기록 호환 실패");
+        if (LunaCapture.Editor.EditorWindow.NextNumber([new LunaCapture.Editor.NumberAnnotation { Number = 7 }, new LunaCapture.Editor.NumberAnnotation { Number = 7 }, new LunaCapture.Editor.NumberAnnotation { Number = 2 }]) != 8) throw new Exception("중복 번호 후 다음 번호 실패");
+        if (!LunaCapture.Editor.ColorPaletteWindow.TryParseHex("#12AB3480", out uint rgba) || rgba != 0x8012AB34
+            || !LunaCapture.Editor.ColorPaletteWindow.TryParseHex("112233", out uint rgb) || rgb != 0xFF112233
+            || LunaCapture.Editor.ColorPaletteWindow.TryParseHex("#oops", out _)) throw new Exception("HEX 변환 실패");
+        if (Environment.GetEnvironmentVariable("LUNA_SETTINGS_DIR") != null)
+        {
+            LunaCapture.Services.AppSettings.Current.SelectedColor = rgba;
+            LunaCapture.Services.AppSettings.Current.CustomColors = [rgba, rgb];
+            LunaCapture.Services.AppSettings.Current.NumberSquare = true;
+            LunaCapture.Services.AppSettings.Save();
+            LunaCapture.Services.AppSettings.Load();
+            if (LunaCapture.Services.AppSettings.Current.SelectedColor != rgba || LunaCapture.Services.AppSettings.Current.CustomColors.Count != 2 || !LunaCapture.Services.AppSettings.Current.NumberSquare) throw new Exception("팔레트 설정 저장 실패");
+            log.AppendLine("선택 색상·맞춤 팔레트·번호 스타일 설정 저장/복원 통과");
+        }
+        log.AppendLine("9가지 도형 · 번호 영역/이동 · 이전 기록 호환 · HSV 변환 통과");
         LunaCapture.Graphics.PngEncoder.Save(actual, Path.Combine(LunaCapture.Services.HistoryStore.Dir, "_recomposed.png"));
 
         for (int i = 0; i < 4; i++) { Thread.Sleep(5); LunaCapture.Services.HistoryStore.AddRecording(i % 2 == 0 ? "gif" : "mp4", $"C:\\nowhere\\r{i}.gif", expected, 640, 400); }
