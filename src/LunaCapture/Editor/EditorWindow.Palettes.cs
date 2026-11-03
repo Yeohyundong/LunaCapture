@@ -71,15 +71,17 @@ internal sealed unsafe partial class EditorWindow
     void DrawNumberEdit(Gfx g)
     {
         if (_numberEditing is not { } n) return;
-        var center = n.BadgeCenter;
-        float size = n.BadgeSize * _zoom;
+        var preview = (NumberAnnotation)n.Clone();
+        if (int.TryParse(_numberDraft, out int draft) && draft > 0) preview.Number = draft;
+        var center = preview.BadgeCenter;
+        float size = preview.BadgeSize * _zoom;
         float cx = _imgX + center.X * _zoom, cy = _imgY + center.Y * _zoom;
         float x = cx - size / 2, y = cy - size / 2;
         uint color = (n.Color & 0xFFFFFF) | 0xFF000000;
         if (n.Square) g.FillRect(color, x, y, size, size);
         else g.FillEllipse(color, x, y, size, size);
         g.Rect(0xFFFFFFFF, MathF.Max(1, _scale), x - 2, y - 2, size + 4, size + 4);
-        using var font = new GdiFont(UiFonts.Annotation, MathF.Max(8 * _scale, size * MathF.Min(0.5f, 0.82f / Math.Max(1, _numberDraft.Length))), bold: true);
+        using var font = new GdiFont(UiFonts.Annotation, preview.EffectiveFontSize * _zoom, bold: true);
         float w = g.MeasureWidth(_numberDraft, font), h = g.LineHeight(font);
         if (_numberReplace) g.FillRect(0xFF285CB5, cx - w / 2 - 1, cy - h / 2, w + 2, h);
         g.Text(_numberDraft, font, _numberReplace ? 0xFFFFFFFF : Stickers.ContrastText(color), cx - w / 2, cy - h / 2);

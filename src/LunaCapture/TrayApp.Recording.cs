@@ -95,6 +95,12 @@ internal sealed partial class TrayApp
 
     void StopRecording()
     {
+        _finishingRecording = true;
+        try { StopRecordingCore(); } finally { _finishingRecording = false; }
+    }
+
+    void StopRecordingCore()
+    {
         var rec = _recorder;
         _recorder = null;
         _recBar = null;

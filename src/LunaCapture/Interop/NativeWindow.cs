@@ -18,6 +18,7 @@ internal abstract unsafe class NativeWindow
     public static nint DefaultIcon, DefaultSmallIcon;
 
     public nint Handle { get; private set; }
+    internal static bool HasOtherWindows(nint main) => s_windows.Keys.Any(hwnd => hwnd != main);
 
     protected void CreateHandle(uint exStyle, uint style, int x, int y, int w, int h, string title = "")
     {

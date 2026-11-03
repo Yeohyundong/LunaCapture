@@ -21,6 +21,9 @@ internal sealed class AnnotationDto
     public int Number { get; set; }
     public bool HasBox { get; set; }
     public bool Glow { get; set; }
+    public bool Outside { get; set; }
+    public int? Corner { get; set; }
+    public int? Quadrant { get; set; }
     public float Size { get; set; }
     public int BlockSize { get; set; }
     public bool Highlighter { get; set; }
@@ -49,7 +52,7 @@ internal static class AnnotationJson
         TextAnnotation x => new() { Type = "text", Color = x.Color, Pts = P(x.Position), Text = x.Text, FontSize = x.FontSize },
         PenAnnotation x => new() { Type = "pen", Color = x.Color, Width = x.Width, Pts = P([.. x.Points]), Highlighter = x.Highlighter },
         StickerAnnotation x => new() { Type = "sticker", Pts = P(x.Center), Kind = (int)x.Kind, Size = x.Size },
-        NumberAnnotation x => new() { Type = "number", Color = x.Color, Width = x.Width, Pts = P(x.Center, x.End), Number = x.Number, Size = x.Size, Kind = x.Square ? 1 : 0, Glow = x.Glow, HasBox = x.HasBox },
+        NumberAnnotation x => new() { Type = "number", Color = x.Color, Width = x.Width, Pts = P(x.Center, x.End), Number = x.Number, Size = x.Size, Kind = x.Square ? 1 : 0, Glow = x.Glow, Outside = x.Outside, Corner = x.Corner, Quadrant = x.Quadrant, FontSize = x.FontSize, HasBox = x.HasBox },
         MosaicAnnotation x => new() { Type = "mosaic", Pts = P(x.A, x.B), BlockSize = x.BlockSize },
         ImageAnnotation x => new() { Type = "image", Pts = P(x.A, x.B), Iw = x.Image.Width, Ih = x.Image.Height, Data = Pack(x.Image.Bgra) },
         PatchAnnotation x => new() { Type = "patch", Color = x.Color, Pts = P(x.A, x.B) },
@@ -93,7 +96,7 @@ internal static class AnnotationJson
                 return pen;
             }
             case "sticker": return new StickerAnnotation { Center = Pt(d.Pts, 0), Kind = (StickerKind)d.Kind, Size = d.Size };
-            case "number": return new NumberAnnotation { Color = d.Color, Width = d.Width, Center = Pt(d.Pts, 0), End = Pt(d.Pts, 1), Number = d.Number, Size = d.Size, Square = d.Kind == 1, Glow = d.Glow, HasBox = d.HasBox };
+            case "number": return new NumberAnnotation { Color = d.Color, Width = d.Width, Center = Pt(d.Pts, 0), End = Pt(d.Pts, 1), Number = d.Number, Size = d.Size, Square = d.Kind == 1, Glow = d.Glow, Outside = d.Outside, Corner = d.Corner, Quadrant = d.Quadrant, FontSize = d.FontSize, HasBox = d.HasBox };
             case "mosaic": return new MosaicAnnotation { A = Pt(d.Pts, 0), B = Pt(d.Pts, 1), BlockSize = d.BlockSize };
             case "image": try { return Unpack(d); } catch { return null; }
             case "patch": return new PatchAnnotation { Color = d.Color, A = Pt(d.Pts, 0), B = Pt(d.Pts, 1) };

@@ -10,6 +10,7 @@ namespace LunaCapture.Services;
 internal sealed class AppSettings
 {
     public bool OpenEditor { get; set; } = true;
+    public bool AutoUpdate { get; set; } = true;
     public bool OpenGifTrim { get; set; } = true;
     public bool ShowCursor { get; set; } = true;
     /// <summary>다른 프로그램이 PrtSc를 쓰고 있을 때 LunaCapture가 우선 사용할지. null = 아직 안 물어봄.</summary>
@@ -32,6 +33,11 @@ internal sealed class AppSettings
     public int RecommendedPalette { get; set; }
     public bool NumberSquare { get; set; }
     public bool NumberGlow { get; set; }
+    public bool NumberOutside { get; set; }
+    public int NumberSize { get; set; } = 1;
+    public int NumberCorner { get; set; }
+    public int NumberQuadrant { get; set; } = 2;
+    public float NumberFontSize { get; set; } = 16;
     /// <summary>편집 창 오른쪽 캡처 기록 패널을 보일지</summary>
     public bool EditorHistoryPanel { get; set; } = true;
     public int? EditorLeft { get; set; }

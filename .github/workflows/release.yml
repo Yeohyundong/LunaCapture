@@ -1,0 +1,69 @@
+name: Build and release LunaCapture
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/LunaCapture/LunaCapture.csproj'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lunacapture-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: Read version and skip an already published release
+        id: version
+        shell: pwsh
+        run: |
+          $version = ([xml](Get-Content src/LunaCapture/LunaCapture.csproj -Raw)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'A stable three-part version is required' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          $existing = gh release view "v$version" --json isDraft --jq '.isDraft' 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            if ($existing -eq 'true') { throw 'A draft with this version exists; resolve it before retrying' }
+            "skip=true" >> $env:GITHUB_OUTPUT
+          } else {
+            "skip=false" >> $env:GITHUB_OUTPUT
+          }
+          exit 0
+      - name: Build standalone Native AOT executable and package
+        if: steps.version.outputs.skip != 'true'
+        shell: pwsh
+        run: ./publish.ps1
+      - name: Validate update and annotation behavior in the published executable
+        if: steps.version.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $env:LUNA_SETTINGS_DIR = Join-Path $env:RUNNER_TEMP 'luna-test-settings'
+          $env:LUNA_HISTORY_DIR = Join-Path $env:RUNNER_TEMP 'luna-test-history'
+          foreach ($kind in @('history', 'update')) {
+            $result = Join-Path $env:RUNNER_TEMP "$kind-results.txt"
+            $test = Start-Process -FilePath ./build/publish/LunaCapture.exe -ArgumentList "--$kind-selftest", $result -Wait -PassThru -WindowStyle Hidden
+            if ($test.ExitCode -ne 0 -or !(Test-Path $result)) { throw "$kind test failed" }
+            Get-Content $result
+          }
+      - name: Publish release with executable, package, and checksums
+        if: steps.version.outputs.skip != 'true'
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: ./tools/publish-release.ps1 -Version $env:RELEASE_VERSION

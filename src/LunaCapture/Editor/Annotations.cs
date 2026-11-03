@@ -408,13 +408,34 @@ internal sealed class NumberAnnotation : Annotation
     public float Size;
     public bool Square;
     public bool Glow;
+    public bool Outside;
+    public int? Corner;
+    // Clockwise from upper-left, relative to a down-right drag; mirrored with drag direction.
+    public int? Quadrant;
+    public int EffectiveQuadrant => Quadrant is >= 0 and <= 3 ? Quadrant.Value : Outside ? 0 : 2;
+    public float FontSize;
+    public int EffectiveCorner => Corner is >= 0 and <= 3 ? Corner.Value : (Center.X > End.X ? 1 : 0) + (Center.Y > End.Y ? 2 : 0);
+    public float EffectiveFontSize => FontSize > 0 ? FontSize : Size * MathF.Min(0.5f, 0.82f / Number.ToString().Length);
     public PointF End;
     public bool HasBox;
 
     public override bool IsMeaningful => true;
 
-    public float BadgeSize => !HasBox ? Size : MathF.Min(Size, MathF.Max(2,
+    public float BadgeSize => FontSize > 0 ? MeasureBadge() : !HasBox || Outside ? Size : MathF.Min(Size, MathF.Max(2,
         MathF.Min(MathF.Abs(End.X - Center.X), MathF.Abs(End.Y - Center.Y)) - MathF.Max(2, Width) - (Square ? 0 : 4)));
+
+    float MeasureBadge()
+    {
+        nint dc = User32.GetDC(0);
+        try
+        {
+            using var g = new Gfx(dc);
+            using var font = new GdiFont(UiFonts.Annotation, FontSize, bold: true);
+            float w = g.MeasureWidth(Number.ToString(), font), h = g.LineHeight(font);
+            return (Square ? MathF.Max(w, h) : MathF.Sqrt(w * w + h * h)) + FontSize * 0.6f;
+        }
+        finally { User32.ReleaseDC(0, dc); }
+    }
 
     public PointF BadgeCenter
     {
@@ -423,7 +444,16 @@ internal sealed class NumberAnnotation : Annotation
             if (!HasBox) return Center;
             float margin = Square ? 0 : 2;
             float offset = BadgeSize / 2 + margin + MathF.Max(2, Width) / 2;
-            return new(Center.X + (End.X >= Center.X ? offset : -offset), Center.Y + (End.Y >= Center.Y ? offset : -offset));
+            if (Quadrant is >= 0 and <= 3)
+            {
+                float sx = End.X >= Center.X ? 1 : -1, sy = End.Y >= Center.Y ? 1 : -1;
+                float qx = Quadrant is 0 or 3 ? -1 : 1, qy = Quadrant is 0 or 1 ? -1 : 1;
+                return new(Center.X + sx * qx * offset, Center.Y + sy * qy * offset);
+            }
+            if (Outside) offset = -offset;
+            var box = Geo.FromPoints(Center, End);
+            bool right = (EffectiveCorner & 1) != 0, bottom = (EffectiveCorner & 2) != 0;
+            return new(right ? box.X + box.Width - offset : box.X + offset, bottom ? box.Y + box.Height - offset : box.Y + offset);
         }
     }
 
@@ -437,7 +467,7 @@ internal sealed class NumberAnnotation : Annotation
             g.Rect(Color, MathF.Max(2, Width), box.X, box.Y, box.Width, box.Height);
         }
         var c = BadgeCenter;
-        Stickers.Number(g, Number, c.X, c.Y, BadgeSize, Color, Square, Glow);
+        Stickers.Number(g, Number, c.X, c.Y, BadgeSize, Color, Square, Glow, FontSize);
     }
 
     public override RectF Bounds(Gfx g)
@@ -456,6 +486,17 @@ internal sealed class NumberAnnotation : Annotation
             : Geo.SegmentDistance(p, c, c) <= BadgeSize / 2 + tol;
     }
     public override bool HitTest(PointF p, float tol, Gfx g) => HitBadge(p, tol) || (HasBox && Geo.NearEdge(Geo.FromPoints(Center, End), p, tol + MathF.Max(2, Width)));
+
+    public void ResizeBox(int handle, PointF point)
+    {
+        bool right = Center.X > End.X, bottom = Center.Y > End.Y;
+        var b = Geo.FromPoints(Center, End);
+        float l = b.X, t = b.Y, r = b.X + b.Width, d = b.Y + b.Height;
+        if (handle is 0 or 2) l = MathF.Min(point.X, r - 8); else r = MathF.Max(point.X, l + 8);
+        if (handle is 0 or 1) t = MathF.Min(point.Y, d - 8); else d = MathF.Max(point.Y, t + 8);
+        Center = new(right ? r : l, bottom ? d : t);
+        End = new(right ? l : r, bottom ? t : d);
+    }
 
     public override void Offset(float dx, float dy)
     {

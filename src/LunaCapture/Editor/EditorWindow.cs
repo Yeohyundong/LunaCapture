@@ -48,7 +48,6 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
 
     Tool _tool = Tool.Rect;
     static StickerKind s_sticker = (StickerKind)Math.Clamp(Services.AppSettings.Current.Sticker, 0, Stickers.All.Length - 1); // 마지막으로 고른 스티커
-    static readonly float[] NumberSizes = [24f, 32f, 44f];
     static readonly float[] StickerSizes = [36f, 52f, 72f];
     uint _color = AppSettings.Current.SelectedColor;
     int _thickness = 1;
@@ -371,6 +370,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             OnStripClick(si);
             return;
         }
+        if (HasStrip && StripRect() is var strip && x >= strip.Left && x < strip.Right && y >= strip.Top && y < strip.Bottom) return;
         if (PanelShown && _panel!.Contains(x, y))
         {
             OnPanelClick(x, y);
@@ -390,6 +390,8 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             return;
         }
         if (TrySelectAt(x, y, p)) return;
+        // Canvas margins are not part of the image. Clicking them must not create invisible annotations.
+        if (p.X < 0 || p.Y < 0 || p.X >= _base.Width || p.Y >= _base.Height) return;
 
         uint color = _color;
         float width = LineWidths[_thickness] * _scale;
@@ -430,7 +432,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
                 StartBubble(p);
                 return;
             case Tool.Number:
-                _active = new NumberAnnotation { Number = NextNumber(_items), Center = p, End = p, Size = NumberSizes[_thickness] * _scale, Color = color, Width = width, Square = AppSettings.Current.NumberSquare, Glow = AppSettings.Current.NumberGlow };
+                _active = new NumberAnnotation { Number = NextNumber(_items, new RectF(0, 0, _base.Width, _base.Height)), Center = p, End = p, Size = 32 * _scale, FontSize = Math.Clamp(AppSettings.Current.NumberFontSize, 8, 144) * _scale, Quadrant = AppSettings.Clamp(AppSettings.Current.NumberQuadrant, 4), Color = color, Width = width, Square = AppSettings.Current.NumberSquare, Glow = AppSettings.Current.NumberGlow };
                 break;
             case Tool.Sticker:
                 Commit(new StickerAnnotation { Kind = s_sticker, Center = p, Size = StickerSizes[_thickness] * _scale });
@@ -505,7 +507,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         const int SizeNwse = 32642, SizeNesw = 32643, SizeAll = 32646;
         return a switch
         {
-            RectAnnotation or MosaicAnnotation or ImageAnnotation or SpotlightAnnotation => handle is 1 or 2 ? SizeNesw : SizeNwse, // ↗↙ / ↖↘
+            NumberAnnotation { HasBox: true } or RectAnnotation or MosaicAnnotation or ImageAnnotation or SpotlightAnnotation => handle is 1 or 2 ? SizeNesw : SizeNwse, // ↗↙ / ↖↘
             ArrowAnnotation => SizeAll, // 화살표 끝점은 어느 방향으로든 움직인다
             _ => SizeNwse,              // 스티커·번호: 오른쪽 아래 손잡이
         };
@@ -675,11 +677,19 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
     }
 
     /// <summary>다음 번호 = 지금까지 찍은 번호 중 가장 큰 것 + 1 (되돌리기 하면 자연히 다시 줄어든다).</summary>
-    internal static int NextNumber(IEnumerable<Annotation> items)
+    internal static int NextNumber(IEnumerable<Annotation> items, RectF? canvas = null)
     {
         int max = 0;
         foreach (var a in items)
-            if (a is NumberAnnotation n && n.Number > max) max = n.Number;
+            if (a is NumberAnnotation n && n.Number > max)
+            {
+                if (canvas is { } image)
+                {
+                    var b = n.Bounds(null!);
+                    if (b.X + b.Width <= image.X || b.Y + b.Height <= image.Y || b.X >= image.X + image.Width || b.Y >= image.Y + image.Height) continue;
+                }
+                max = n.Number;
+            }
         return max == int.MaxValue ? int.MaxValue : max + 1;
     }
 
@@ -731,6 +741,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         int cell = (int)(40 * _scale), pad = (int)(6 * _scale);
         int columns = StripMode == 3 ? 3 : StripCount;
         int w = cell * columns + pad * 2, h = cell * (StripMode == 3 ? 3 : 1) + pad * 2;
+        if (StripMode == 4) { w = (int)(220 * _scale); h = (int)(240 * _scale); }
         int x = (int)(8 * _scale);
         var anchor = StripMode switch { 1 => Tool.Sticker, 2 => Tool.Bubble, 4 => Tool.Number, _ => Tool.Rect };
         foreach (var it in _toolbar.Items)
@@ -746,6 +757,16 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         var r = StripRect();
         if (x < r.Left || x >= r.Right || y < r.Top || y >= r.Bottom) return -1;
         int cell = (int)(40 * _scale), pad = (int)(6 * _scale);
+        if (StripMode == 4)
+        {
+            float lx = (x - r.Left) / _scale, ly = (y - r.Top) / _scale;
+            if (ly >= 60 && ly < 144 && lx >= 80 && lx < 164)
+            {
+                int quadrantColumn = (int)((lx - 80) / 42), quadrantRow = (int)((ly - 60) / 42);
+                return 30 + (quadrantRow == 0 ? quadrantColumn : 3 - quadrantColumn);
+            }
+            if (ly >= 160 && ly < 188 && lx >= 64 && lx < 202) return lx < 105 ? 20 : lx >= 160 ? 22 : 21;
+        }
         int col = (x - r.Left - pad) / cell, row = (y - r.Top - pad) / cell;
         if (x < r.Left + pad || y < r.Top + pad || col >= (StripMode == 3 ? 3 : StripCount) || row >= (StripMode == 3 ? 3 : 1)) return -1;
         int visual = row * 3 + col;
@@ -755,6 +776,20 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
 
     void OnStripClick(int i)
     {
+        if (StripMode == 4 && i >= 10)
+        {
+            if (i is >= 20 and < 30)
+            {
+                if (i != 21) ChangeTextSize(i == 20 ? -2 : 2);
+                return;
+            }
+            if (_selected is NumberAnnotation) PushUndo();
+            AppSettings.Current.NumberQuadrant = i - 30;
+            if (_selected is NumberAnnotation n) n.Quadrant = i - 30;
+            AppSettings.Save();
+            if (_selected != null) RebuildCommitted();
+            Invalidate(); return;
+        }
         if (StripMode == 4)
         {
             AppSettings.Current.NumberSquare = i > 0;
@@ -792,6 +827,35 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         g.FillRoundRect(0x33000000, r.Left, r.Top + 2 * _scale, r.Width, r.Height, 10 * _scale);
         g.FillRoundRect(0xF22A2A30, r.Left, r.Top, r.Width, r.Height, 10 * _scale);
         int selected = StripSelected;
+        if (StripMode == 4)
+        {
+            using var label = new GdiFont(UiFonts.Family, 12 * _scale, bold: false);
+            using var hint = new GdiFont(UiFonts.Family, 11 * _scale, bold: false);
+            int quadrant = _selected is NumberAnnotation ns ? ns.EffectiveQuadrant : AppSettings.Clamp(AppSettings.Current.NumberQuadrant, 4);
+            void Option(string text, int x, int y, int w, bool chosen)
+            {
+                g.FillRoundRect(chosen ? 0xFF51477B : 0xFF383840, r.Left + x * _scale, r.Top + y * _scale, w * _scale, 28 * _scale, 5 * _scale);
+                g.Text(text, label, 0xFFF0F0F5, r.Left + (x + 9) * _scale, r.Top + (y + 6) * _scale);
+            }
+            g.Text("배지 위치", label, 0xFFB9B9C5, r.Left + 10 * _scale, r.Top + 92 * _scale);
+            for (int i = 0; i < 4; i++)
+            {
+                int col = i is 1 or 2 ? 1 : 0, row = i >= 2 ? 1 : 0;
+                float x = r.Left + (80 + col * 42) * _scale, y = r.Top + (60 + row * 42) * _scale;
+                g.FillRoundRect(i == quadrant ? 0xFF665887 : 0xFF383840, x, y, 36 * _scale, 36 * _scale, 3 * _scale);
+                g.Rect(i == quadrant ? 0xFFFFFFFF : 0xFFB9B9C5, (i == quadrant ? 2 : 1) * _scale, x + 2 * _scale, y + 2 * _scale, 32 * _scale, 32 * _scale);
+                g.Text("1", label, 0xFFF0F0F5, x + 14 * _scale, y + 10 * _scale);
+            }
+            float anchorX = r.Left + 119 * _scale, anchorY = r.Top + 99 * _scale;
+            g.Line(_color | 0xFF000000, 2 * _scale, anchorX, anchorY, r.Left + 174 * _scale, anchorY);
+            g.Line(_color | 0xFF000000, 2 * _scale, anchorX, anchorY, anchorX, r.Top + 148 * _scale);
+            g.Text("글자", label, 0xFFB9B9C5, r.Left + 12 * _scale, r.Top + 166 * _scale);
+            Option("A−", 64, 160, 40, false);
+            Option($"{CurrentTextSize:0.#}", 106, 160, 52, false);
+            Option("A+", 160, 160, 42, false);
+            g.Text("클릭: 번호만 · 드래그: 박스 생성", hint, 0xFFE4E0FF, r.Left + 10 * _scale, r.Top + 202 * _scale);
+            g.Text("그리는 방향에 따라 위치가 반전돼요", hint, 0xFFB9B9C5, r.Left + 10 * _scale, r.Top + 220 * _scale);
+        }
         for (int i = 0; i < StripCount; i++)
         {
             int visual = StripMode == 3 ? Array.IndexOf(ShapeGrid, i) : i;
@@ -870,12 +934,20 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         RenderActive();
     }
 
-    float CurrentTextSize => (Editing ?? _selected as TextAnnotation) is { FontSize: > 0 } t
+    bool NumberSizeContext => _selected is NumberAnnotation || (Editing == null && _selected == null && _tool == Tool.Number);
+    float CurrentTextSize => _selected is NumberAnnotation n ? n.EffectiveFontSize / _scale : NumberSizeContext ? Math.Clamp(AppSettings.Current.NumberFontSize, 8, 144) : (Editing ?? _selected as TextAnnotation) is { FontSize: > 0 } t
         ? t.FontSize / _scale : _textSize;
 
     void ChangeTextSize(float delta)
     {
         float size = Math.Clamp(CurrentTextSize + delta, 8f, 144f);
+        if (NumberSizeContext)
+        {
+            AppSettings.Current.NumberFontSize = size;
+            AppSettings.Save();
+            if (_selected is NumberAnnotation n) { PushUndo(); n.FontSize = size * _scale; RebuildCommitted(); }
+            Invalidate(); return;
+        }
         _textSize = size;
         if (Editing is { } editing)
         {
@@ -1173,7 +1245,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             case SpotlightAnnotation sp: return Corners(sp.Box);
             case ArrowAnnotation ar: return [ar.From, ar.To];
             case StickerAnnotation st: return [new(st.Center.X + st.Size / 2, st.Center.Y + st.Size / 2)];
-            case NumberAnnotation n: return n.HasBox ? [n.End] : [new(n.Center.X + n.Size / 2, n.Center.Y + n.Size / 2)];
+            case NumberAnnotation n: return n.HasBox ? Corners(Geo.FromPoints(n.Center, n.End)) : [new(n.Center.X + n.BadgeSize / 2, n.Center.Y + n.BadgeSize / 2)];
             default: return [];
         }
     }
@@ -1230,8 +1302,13 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             case ArrowAnnotation ar: if (h == 0) ar.From = p; else ar.To = p; break;
             case StickerAnnotation st: st.Size = MathF.Max(12, 2 * MathF.Max(MathF.Abs(p.X - st.Center.X), MathF.Abs(p.Y - st.Center.Y))); break;
             case NumberAnnotation n:
-                if (n.HasBox) n.End = p;
-                else n.Size = MathF.Max(12, 2 * MathF.Max(MathF.Abs(p.X - n.Center.X), MathF.Abs(p.Y - n.Center.Y)));
+                if (n.HasBox) n.ResizeBox(h, p);
+                else
+                {
+                    float diameter = MathF.Max(12, 2 * MathF.Max(MathF.Abs(p.X - n.Center.X), MathF.Abs(p.Y - n.Center.Y)));
+                    if (n.FontSize > 0) n.FontSize = Math.Clamp(n.FontSize * diameter / n.BadgeSize, 8, 144);
+                    else n.Size = diameter;
+                }
                 break;
         }
     }
@@ -1292,7 +1369,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
                 if (color) _selected.Color = c; else _selected.Width = width;
                 break;
             case NumberAnnotation n:
-                if (color) n.Color = c; else n.Size = NumberSizes[_thickness] * _scale;
+                if (color) n.Color = c; else n.Width = width;
                 break;
             case StickerAnnotation st:
                 if (!color) st.Size = StickerSizes[_thickness] * _scale;

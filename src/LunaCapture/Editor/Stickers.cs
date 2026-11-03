@@ -252,7 +252,7 @@ internal static class Stickers
         g.Rect(WithOpacity(0xFF000000, (color >> 24) / 255f * 0.6f), width + 1.5f, box.X, box.Y, box.Width, box.Height);
     }
 
-    public static void Number(Gfx g, int number, float cx, float cy, float size, uint color, bool square = false, bool glow = false)
+    public static void Number(Gfx g, int number, float cx, float cy, float size, uint color, bool square = false, bool glow = false, float fontSize = 0)
     {
         var box = new RectF(cx - size / 2, cy - size / 2, size, size);
         if (glow && square) NumberOutlineGlow(g, box, MathF.Max(1, size * 0.06f), color);
@@ -260,7 +260,7 @@ internal static class Stickers
         if (square) g.FillRect(color, cx - size / 2, cy - size / 2, size, size);
         else g.FillEllipse(color, cx - size / 2, cy - size / 2, size, size);
         string text = number.ToString();
-        Glyph(g, text, cx, cy, size * MathF.Min(0.5f, 0.82f / text.Length), (ContrastText(color) & 0xFFFFFF) | (color & 0xFF000000));
+        Glyph(g, text, cx, cy, fontSize > 0 ? fontSize : size * MathF.Min(0.5f, 0.82f / text.Length), (ContrastText(color) & 0xFFFFFF) | (color & 0xFF000000));
     }
 
     // ───────────────────────── 말풍선 ─────────────────────────

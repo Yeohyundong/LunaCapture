@@ -4,6 +4,16 @@ using LunaCapture.Interop;
 
 unsafe
 {
+    if (args.Length > 0 && args[0] == "--apply-update") { LunaCapture.Services.UpdateInstaller.Apply(args); return; }
+    if (args.Length == 2 && args[0] == "--update-selftest") { LunaCapture.Services.UpdateSelfTest.Run(args[1]); return; }
+    if (args.Length == 2 && args[0] == "--update-download-selftest")
+    {
+        string cache = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[1]))!, "download-test");
+        var result = LunaCapture.Services.UpdateService.CheckAsync(new Version(0, 0, 0), cache).GetAwaiter().GetResult();
+        if (result.Update == null) throw new Exception(result.Message);
+        File.WriteAllText(args[1], $"GitHub Release 실제 다운로드·ZIP SHA-256·실행 파일 버전 검증 통과: {result.Update.Version}\n");
+        return;
+    }
     if (args.Length == 2 && args[0] == "--gif-selftest")
     {
         LunaCapture.Gif.GifSelfTest.Run(args[1]);
@@ -214,8 +224,61 @@ unsafe
         }
         if (LunaCapture.Editor.ColorPaletteWindow.Hsv(0, 1, 1, 128) != 0x80FF0000 || LunaCapture.Editor.ColorPaletteWindow.Hsv(120, 1, 1) != 0xFF00FF00) throw new Exception("HSV 변환 실패");
         var oldBadge = LunaCapture.Editor.AnnotationJson.FromDto(new LunaCapture.Editor.AnnotationDto { Type = "number", Number = 1, Size = 32, Pts = [10, 20] }) as LunaCapture.Editor.NumberAnnotation;
+        var resizeBadge = new LunaCapture.Editor.NumberAnnotation { Center = new(100, 100), End = new(240, 220), Size = 44, Width = 4, HasBox = true, Square = true, Outside = true };
+        for (int handle = 0; handle < 4; handle++)
+        {
+            foreach (bool reversed in new[] { false, true })
+            {
+                resizeBadge.Center = reversed ? new(240, 220) : new(100, 100);
+                resizeBadge.End = reversed ? new(100, 100) : new(240, 220);
+                var opposite = handle switch { 0 => new PointF(240, 220), 1 => new PointF(100, 220), 2 => new PointF(240, 100), _ => new PointF(100, 100) };
+                resizeBadge.ResizeBox(handle, new(handle is 0 or 2 ? 80 : 270, handle is 0 or 1 ? 70 : 250));
+                var box = LunaCapture.Editor.Geo.FromPoints(resizeBadge.Center, resizeBadge.End);
+                if (resizeBadge.Size != 44 || !LunaCapture.Editor.Geo.Inside(box, opposite)
+                    || (reversed ? resizeBadge.Center.X <= resizeBadge.End.X : resizeBadge.Center.X >= resizeBadge.End.X)) throw new Exception("네 모서리 크기 조절 실패");
+                if (LunaCapture.Editor.Geo.Inside(box, resizeBadge.BadgeCenter)) throw new Exception("바깥쪽 배치 실패");
+            }
+        }
+        var restoredOutside = (LunaCapture.Editor.NumberAnnotation)LunaCapture.Editor.AnnotationJson.FromDto(LunaCapture.Editor.AnnotationJson.ToDto(resizeBadge))!;
+        if (!restoredOutside.Outside || restoredOutside.Size != 44) throw new Exception("위치·크기 기록 복원 실패");
+        log.AppendLine("안쪽/바깥쪽 배치 · 네 모서리 크기 조절 · 배지 크기 유지 통과");
+        var fontBadge = new LunaCapture.Editor.NumberAnnotation { Number = 1, FontSize = 24, Size = 32, Center = new(100, 100), End = new(600, 500), HasBox = true, Square = true };
+        float oneDigitSize = fontBadge.BadgeSize;
+        fontBadge.Number = 88888;
+        if (fontBadge.BadgeSize <= oneDigitSize || fontBadge.EffectiveFontSize != 24) throw new Exception("글자 크기 기반 배지 자동 조절 실패");
+        foreach (bool outside in new[] { false, true }) for (int corner = 0; corner < 4; corner++)
+        {
+            fontBadge.Corner = corner; fontBadge.Outside = outside;
+            var c = fontBadge.BadgeCenter;
+            if (((corner & 1) == 0 ? c.X >= 350 : c.X <= 350) || ((corner & 2) == 0 ? c.Y >= 300 : c.Y <= 300)) throw new Exception("4개 모서리 배치 실패");
+            if (LunaCapture.Editor.Geo.Inside(LunaCapture.Editor.Geo.FromPoints(fontBadge.Center, fontBadge.End), c) == outside) throw new Exception("모서리 안쪽/바깥쪽 실패");
+        }
+        var fontRestored = (LunaCapture.Editor.NumberAnnotation)LunaCapture.Editor.AnnotationJson.FromDto(LunaCapture.Editor.AnnotationJson.ToDto(fontBadge))!;
+        if (fontRestored.Corner != 3 || fontRestored.FontSize != 24 || fontRestored.BadgeSize != fontBadge.BadgeSize) throw new Exception("번호 폰트·모서리 복원 실패");
+        log.AppendLine("4개 모서리 × 안/밖 · 폰트 고정 및 여러 자리 배지 자동 확장 통과");
+        for (int q = 0; q < 4; q++) foreach (int sx in new[] { -1, 1 }) foreach (int sy in new[] { -1, 1 })
+        {
+            fontBadge.Center = new(300, 300); fontBadge.End = new(300 + sx * 250, 300 + sy * 200); fontBadge.Quadrant = q;
+            var c = fontBadge.BadgeCenter;
+            int actualX = Math.Sign((c.X - 300) * sx), actualY = Math.Sign((c.Y - 300) * sy);
+            if (actualX != (q is 0 or 3 ? -1 : 1) || actualY != (q is 0 or 1 ? -1 : 1)) throw new Exception("드래그 방향별 사분면 반전 실패");
+            var restoredQ = (LunaCapture.Editor.NumberAnnotation)LunaCapture.Editor.AnnotationJson.FromDto(LunaCapture.Editor.AnnotationJson.ToDto(fontBadge))!;
+            if (restoredQ.Quadrant != q || restoredQ.BadgeCenter.X != c.X || restoredQ.BadgeCenter.Y != c.Y) throw new Exception("사분면 복원 실패");
+        }
+        log.AppendLine("시작 꼭짓점 기준 4사분면 × 드래그 4방향 반전 및 기록 복원 통과");
         if (oldBadge == null || oldBadge.Square || oldBadge.HasBox) throw new Exception("이전 기록 호환 실패");
         if (LunaCapture.Editor.EditorWindow.NextNumber([new LunaCapture.Editor.NumberAnnotation { Number = 7 }, new LunaCapture.Editor.NumberAnnotation { Number = 7 }, new LunaCapture.Editor.NumberAnnotation { Number = 2 }]) != 8) throw new Exception("중복 번호 후 다음 번호 실패");
+        var numberingWithHidden = new List<LunaCapture.Editor.Annotation>
+        {
+            new LunaCapture.Editor.NumberAnnotation { Number = 1, Center = new(50, 50), Size = 32 },
+            new LunaCapture.Editor.NumberAnnotation { Number = 2, Center = new(100, 50), Size = 32 },
+            new LunaCapture.Editor.NumberAnnotation { Number = 4, Center = new(-100, 50), Size = 32 },
+            new LunaCapture.Editor.NumberAnnotation { Number = 5, Center = new(500, 50), Size = 32 }
+        };
+        if (LunaCapture.Editor.EditorWindow.NextNumber(numberingWithHidden, new RectF(0, 0, 300, 200)) != 3) throw new Exception("화면 밖 숨은 번호 배제 실패");
+        numberingWithHidden.Add(new LunaCapture.Editor.NumberAnnotation { Number = 7, Center = new(295, 150), Size = 32 });
+        if (LunaCapture.Editor.EditorWindow.NextNumber(numberingWithHidden, new RectF(0, 0, 300, 200)) != 8) throw new Exception("일부 보이는 번호 유지 실패");
+        log.AppendLine("화면 밖 숨은 번호 배제 및 가장자리 번호 유지 통과");
         if (!LunaCapture.Editor.ColorPaletteWindow.TryParseHex("#12AB3480", out uint rgba) || rgba != 0x8012AB34
             || !LunaCapture.Editor.ColorPaletteWindow.TryParseHex("112233", out uint rgb) || rgb != 0xFF112233
             || LunaCapture.Editor.ColorPaletteWindow.TryParseHex("#oops", out _)) throw new Exception("HEX 변환 실패");
@@ -224,8 +287,16 @@ unsafe
             LunaCapture.Services.AppSettings.Current.SelectedColor = rgba;
             LunaCapture.Services.AppSettings.Current.CustomColors = [rgba, rgb];
             LunaCapture.Services.AppSettings.Current.NumberSquare = true;
+            LunaCapture.Services.AppSettings.Current.NumberOutside = true;
+            LunaCapture.Services.AppSettings.Current.NumberSize = 2;
+            LunaCapture.Services.AppSettings.Current.NumberCorner = 3;
+            LunaCapture.Services.AppSettings.Current.NumberQuadrant = 1;
+            LunaCapture.Services.AppSettings.Current.NumberFontSize = 28;
             LunaCapture.Services.AppSettings.Save();
             LunaCapture.Services.AppSettings.Load();
+            if (!LunaCapture.Services.AppSettings.Current.NumberOutside || LunaCapture.Services.AppSettings.Current.NumberSize != 2) throw new Exception("번호 기본 위치·크기 설정 저장 실패");
+            if (LunaCapture.Services.AppSettings.Current.NumberCorner != 3 || LunaCapture.Services.AppSettings.Current.NumberFontSize != 28) throw new Exception("번호 폰트·모서리 설정 저장 실패");
+            if (LunaCapture.Services.AppSettings.Current.NumberQuadrant != 1) throw new Exception("사분면 설정 저장 실패");
             if (LunaCapture.Services.AppSettings.Current.SelectedColor != rgba || LunaCapture.Services.AppSettings.Current.CustomColors.Count != 2 || !LunaCapture.Services.AppSettings.Current.NumberSquare) throw new Exception("팔레트 설정 저장 실패");
             log.AppendLine("선택 색상·맞춤 팔레트·번호 스타일 설정 저장/복원 통과");
         }
@@ -403,7 +474,9 @@ unsafe
 
     try
     {
-        var app = new TrayApp();
+        var app = new TrayApp(args.Contains("--skip-update-once"));
+        LunaCapture.Services.Installer.RefreshInstalledVersion();
+        LunaCapture.Services.UpdateInstaller.SignalHealthy(args);
         GC.KeepAlive(app);
         LunaCapture.Services.MemoryTrimmer.Trim(); // 시작 준비에 쓴 메모리를 돌려주고 트레이에서 가볍게 대기
 

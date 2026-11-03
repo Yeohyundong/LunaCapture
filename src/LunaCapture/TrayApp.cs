@@ -32,7 +32,7 @@ internal sealed unsafe partial class TrayApp : NativeWindow
     EditorWindow? _editor;
     string? _lastSavedPath;
 
-    public TrayApp()
+    public TrayApp(bool skipUpdate = false)
     {
         _taskbarCreatedMsg = User32.RegisterWindowMessageW("TaskbarCreated");
         CreateHandle(Win.WS_EX_TOOLWINDOW, Win.WS_POPUP, 0, 0, 0, 0, "LunaCapture");
@@ -40,6 +40,7 @@ internal sealed unsafe partial class TrayApp : NativeWindow
         AddTrayIcon();
 
         RegisterCaptureKey();
+        StartUpdates(skipUpdate);
     }
 
     protected override nint WndProc(uint msg, nint wParam, nint lParam)
@@ -52,6 +53,10 @@ internal sealed unsafe partial class TrayApp : NativeWindow
 
         switch (msg)
         {
+            case Installer.SafeUpdateClose:
+                if (!UpdateService.CanApply(IsUpdateBusy, IsRecording, _recSetup != null || _recBar != null, NativeWindow.HasOtherWindows(Handle), _menuOpen)) return 0;
+                User32.PostMessageW(Handle, Win.WM_CLOSE, 0, 0);
+                return 1;
             case Win.WM_HOTKEY:
                 if (wParam == HotkeyCapture) OnCaptureKey();
                 else if (wParam == HotkeyHistory) OpenHistory();
@@ -62,6 +67,7 @@ internal sealed unsafe partial class TrayApp : NativeWindow
                 return 0;
 
             case Win.WM_TIMER:
+                if (wParam == (nint)UpdateTimer) { UpdateTick(); return 0; }
                 if (wParam == (nint)RetryKeyTimer) RetryCaptureKey();
                 return 0;
 
@@ -88,6 +94,7 @@ internal sealed unsafe partial class TrayApp : NativeWindow
                 User32.KillTimer(Handle, RetryKeyTimer);
                 PrintScreenHook.Uninstall();
                 ShutdownRecording();
+                User32.KillTimer(Handle, UpdateTimer);
                 RemoveTrayIcon();
                 User32.PostQuitMessage(0);
                 return 0;
@@ -135,6 +142,12 @@ internal sealed unsafe partial class TrayApp : NativeWindow
     }
 
     void OnRegionCaptured(PixelImage? image)
+    {
+        _finishingCapture = true;
+        try { OnRegionCapturedCore(image); } finally { _finishingCapture = false; }
+    }
+
+    void OnRegionCapturedCore(PixelImage? image)
     {
         _busy = false;
         if (image == null)
@@ -238,6 +251,12 @@ internal sealed unsafe partial class TrayApp : NativeWindow
 
     void ShowMenu()
     {
+        _menuOpen = true;
+        try { ShowMenuCore(); } finally { _menuOpen = false; }
+    }
+
+    void ShowMenuCore()
+    {
         nint menu = User32.CreatePopupMenu();
         User32.AppendMenuW(menu, Win.MF_STRING | 0x1 /* MF_GRAYED */, 0, $"LunaCapture {Installer.Version}");
         User32.AppendMenuW(menu, Win.MF_SEPARATOR, 0, null);
@@ -255,8 +274,11 @@ internal sealed unsafe partial class TrayApp : NativeWindow
         User32.AppendMenuW(menu, Win.MF_STRING, CmdOpenImageFolder, "이미지·GIF 폴더 열기");
         User32.AppendMenuW(menu, Win.MF_STRING, CmdOpenVideoFolder, "동영상 폴더 열기");
 
+        User32.AppendMenuW(menu, Win.MF_STRING, CmdCheckUpdate, "업데이트 확인");
+        User32.AppendMenuW(menu, Win.MF_STRING, CmdFeedback, "피드백 보내기…");
         nint settings = User32.CreatePopupMenu();
         uint Check(bool on) => Win.MF_STRING | (on ? Win.MF_CHECKED : 0);
+        User32.AppendMenuW(settings, Check(Settings.AutoUpdate), CmdAutoUpdate, "자동 업데이트 (작업 종료 후 적용)");
         User32.AppendMenuW(settings, Check(Settings.OpenEditor), CmdToggleEditor, "캡처 후 편집기 열기");
         User32.AppendMenuW(settings, Check(Settings.OpenGifTrim), CmdToggleTrim, "GIF 녹화 후 자르기 창 열기");
         User32.AppendMenuW(settings, Check(Settings.ShowCursor), CmdToggleCursor, "녹화할 때 마우스 커서 표시");
@@ -293,6 +315,14 @@ internal sealed unsafe partial class TrayApp : NativeWindow
 
         switch (cmd)
         {
+            case CmdCheckUpdate: BeginUpdateCheck(true); break;
+            case CmdFeedback: OpenFeedback(); break;
+            case CmdAutoUpdate:
+                Settings.AutoUpdate = !Settings.AutoUpdate;
+                AppSettings.Save();
+                if (!Settings.AutoUpdate) CancelUpdateHelper();
+                else BeginUpdateCheck(true);
+                break;
             case CmdRegion: StartCapture(CaptureMode.Image); break;
             case CmdRecord: if (IsRecording) _recBar?.Stop(); else StartCapture(CaptureMode.Record); break;
             case CmdOpenImageFolder: OpenFolder(SaveFolder); break;

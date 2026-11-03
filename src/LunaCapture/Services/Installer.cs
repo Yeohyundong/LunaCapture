@@ -84,7 +84,7 @@ internal static unsafe partial class Installer
     /// <summary>설치(또는 업데이트). 실행 중인 다른 LunaCapture가 있으면 먼저 종료시킨다.</summary>
     public static void Install(bool autoStart)
     {
-        CloseRunningInstance();
+        CloseForUpdate();
         Directory.CreateDirectory(InstallDir);
         File.Copy(CurrentExe, InstalledExe, overwrite: true);
 
@@ -145,6 +145,23 @@ internal static unsafe partial class Installer
         catch { }
     }
 
+    public const uint SafeUpdateClose = Win.WM_APP + 73;
+
+    static void CloseForUpdate()
+    {
+        nint window = FindWindowW("LunaCaptureWnd", "LunaCapture");
+        if (window == 0) return;
+        uint pid;
+        User32.GetWindowThreadProcessId(window, &pid);
+        if (SendMessageTimeoutW(window, SafeUpdateClose, 0, 0, 2, 1000, out nuint allowed) == 0 || allowed != 1)
+            throw new InvalidOperationException("기존 앱에서 편집·녹화를 마무리하고 트레이에서 종료한 뒤 다시 설치해 주세요. 작업 중인 앱은 강제로 종료하지 않습니다.");
+        using var process = Process.GetProcessById((int)pid);
+        if (!process.WaitForExit(5000)) throw new InvalidOperationException("기존 앱이 아직 종료 중입니다. 잠시 후 다시 시도해 주세요.");
+    }
+
+    [LibraryImport("user32.dll")]
+    private static partial nint SendMessageTimeoutW(nint hwnd, uint msg, nuint wParam, nint lParam, uint flags, uint timeout, out nuint result);
+
     static void RegisterUninstall()
     {
         using var key = Registry.CurrentUser.CreateSubKey(UninstallKey);
@@ -157,6 +174,12 @@ internal static unsafe partial class Installer
         key.SetValue("NoModify", 1, RegistryValueKind.DWord);
         key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
         key.SetValue("EstimatedSize", (int)(new FileInfo(InstalledExe).Length / 1024), RegistryValueKind.DWord);
+    }
+
+    public static void RefreshInstalledVersion()
+    {
+        if (!IsRunningInstalled) return;
+        try { RegisterUninstall(); } catch (Exception ex) { Log.Error(ex); }
     }
 
     /// <summary>개발용: 바로가기 만들기만 임시 위치에서 시험한다 (`--test-shortcut 경로.lnk`).</summary>
