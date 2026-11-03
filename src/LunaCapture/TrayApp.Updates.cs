@@ -96,10 +96,11 @@ internal sealed unsafe partial class TrayApp
         _updateHelper?.Dispose(); _updateHelper = null; _helperReady = null;
     }
 
+    Editor.FeedbackWindow? _feedback;
     void OpenFeedback()
     {
-        if (Shell32.ShellExecuteW(Handle, "open", ReleaseChannel.FeedbackUrl, null, null, Win.SW_SHOW) <= 32)
-            User32.MessageBoxW(Handle, "기본 메일 앱을 열지 못했어요.\n\n" + ReleaseChannel.FeedbackEmail + " 으로 앱 버전(" + Installer.Version + ")과 함께 피드백을 보내주세요.", "피드백 보내기", 0x40);
+        if (_feedback != null) { User32.ForceForeground(_feedback.Handle); return; }
+        _feedback = new Editor.FeedbackWindow(Handle, () => _feedback = null);
     }
 
     void ToggleAutoUpdate()

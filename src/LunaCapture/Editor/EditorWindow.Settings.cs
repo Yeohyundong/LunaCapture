@@ -48,8 +48,7 @@ internal sealed unsafe partial class EditorWindow
                     else ShowStatus("설치된 앱에서 업데이트를 확인할 수 있어요");
                     break;
                 case 6:
-                    if (_settingAction != null) _settingAction(EditorSettingAction.Feedback);
-                    else Shell32.ShellExecuteW(Handle, "open", ReleaseChannel.FeedbackUrl, null, null, Win.SW_SHOW);
+                    if (_options == null) _options = new FeedbackWindow(Handle, () => _options = null);
                     break;
             }
         }

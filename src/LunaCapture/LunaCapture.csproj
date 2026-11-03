@@ -10,7 +10,7 @@
     <AssemblyName>LunaCapture</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>app.ico</ApplicationIcon>
-    <Version>1.2.1</Version>
+    <Version>1.2.2</Version>
     <Product>LunaCapture</Product>
     <Description>가벼운 화면 캡처 · GIF · 동영상 녹화</Description>
 

@@ -4,6 +4,7 @@ using LunaCapture.Interop;
 
 unsafe
 {
+    if (args.Length == 2 && args[0] == "--feedback-selftest") { LunaCapture.Services.FeedbackSelfTest.Run(args[1]); return; }
     if (args.Length > 0 && args[0] == "--apply-update") { LunaCapture.Services.UpdateInstaller.Apply(args); return; }
     if (args.Length == 2 && args[0] == "--update-selftest") { LunaCapture.Services.UpdateSelfTest.Run(args[1]); return; }
     if (args.Length == 2 && args[0] == "--update-download-selftest")

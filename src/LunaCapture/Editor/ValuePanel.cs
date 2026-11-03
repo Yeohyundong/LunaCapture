@@ -13,6 +13,7 @@ internal abstract unsafe class ValuePanel : PanelWindow
 
     [DllImport("user32.dll")] static extern int EnableWindow(nint hwnd, int enable);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(nint hwnd, char* text, int count);
+    [DllImport("user32.dll")] static extern int GetWindowTextLengthW(nint hwnd);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int SetWindowTextW(nint hwnd, string text);
     [DllImport("user32.dll")] static extern nint SetFocus(nint hwnd);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] static extern nint SetWindowLongPtrW(nint hwnd, int index, nint value);
@@ -48,9 +49,13 @@ internal abstract unsafe class ValuePanel : PanelWindow
 
     protected string Read(nint field)
     {
-        char* text = stackalloc char[128];
-        int length = GetWindowTextW(field, text, 128);
-        return new string(text, 0, length);
+        int capacity = Math.Clamp(GetWindowTextLengthW(field) + 1, 1, 10001);
+        char[] text = new char[capacity];
+        fixed (char* buffer = text)
+        {
+            int length = GetWindowTextW(field, buffer, capacity);
+            return new string(buffer, 0, length);
+        }
     }
     protected void Write(nint field, string value) => SetWindowTextW(field, value);
     protected void Label(Gfx g, string text, float x, float y, float size = 13, uint color = TextMain)

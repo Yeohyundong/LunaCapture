@@ -71,7 +71,6 @@ internal static class UpdateSelfTest
         UpdateInstaller.ReplaceExecutable(next, target, backup);
         Check(File.ReadAllText(target) == "second" && File.ReadAllText(backup) == "old", "subsequent replacement with an existing backup");
         Check(!UpdateInstaller.IsStageDirectory(dir), "arbitrary helper directory accepted");
-        Check(ReleaseChannel.FeedbackUrl.StartsWith("mailto:hyundongy@gmail.com?", StringComparison.Ordinal), "feedback mail recipient");
-        File.WriteAllText(output, "업데이트 검증 통과: 버전 비교·초안/프리릴리스 제외·URL/크기/SHA-256·안전한 ZIP 추출·작업 중 적용 차단·원자적 교체/백업/복구·메일 피드백\n");
+        File.WriteAllText(output, "업데이트 검증 통과: 버전 비교·초안/프리릴리스 제외·URL/크기/SHA-256·안전한 ZIP 추출·작업 중 적용 차단·원자적 교체/백업/복구\n");
     }
 }
