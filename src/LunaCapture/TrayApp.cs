@@ -232,7 +232,7 @@ internal sealed unsafe partial class TrayApp : NativeWindow
     {
         _editor?.Close();
         _editor = new EditorWindow(doc, status, () => { _editor = null; MemoryTrimmer.Trim(); },
-            Settings.HistoryMax > 0 ? OpenEntryAsDocument : null);
+            Settings.HistoryMax > 0 ? OpenEntryAsDocument : null, HandleEditorSetting);
     }
 
     /// <summary>기록 항목 → 편집기 문서 (원본 + 그려 둔 주석).</summary>
@@ -277,7 +277,7 @@ internal sealed unsafe partial class TrayApp : NativeWindow
         User32.AppendMenuW(menu, Win.MF_STRING, CmdOpenVideoFolder, "동영상 폴더 열기");
 
         User32.AppendMenuW(menu, Win.MF_STRING, CmdCheckUpdate, "업데이트 확인");
-        User32.AppendMenuW(menu, Win.MF_STRING, CmdFeedback, "피드백 보내기…");
+        User32.AppendMenuW(menu, Win.MF_STRING, CmdFeedback, "이거 고쳐주세요! ✉");
         nint settings = User32.CreatePopupMenu();
         uint Check(bool on) => Win.MF_STRING | (on ? Win.MF_CHECKED : 0);
         User32.AppendMenuW(settings, Check(Settings.AutoUpdate), CmdAutoUpdate, "자동 업데이트 (작업 종료 후 적용)");
@@ -320,10 +320,7 @@ internal sealed unsafe partial class TrayApp : NativeWindow
             case CmdCheckUpdate: BeginUpdateCheck(true); break;
             case CmdFeedback: OpenFeedback(); break;
             case CmdAutoUpdate:
-                Settings.AutoUpdate = !Settings.AutoUpdate;
-                AppSettings.Save();
-                if (!Settings.AutoUpdate) CancelUpdateHelper();
-                else BeginUpdateCheck(true);
+                ToggleAutoUpdate();
                 break;
             case CmdRegion: StartCapture(CaptureMode.Image); break;
             case CmdRecord: if (IsRecording) _recBar?.Stop(); else StartCapture(CaptureMode.Record); break;

@@ -101,4 +101,22 @@ internal sealed unsafe partial class TrayApp
         if (Shell32.ShellExecuteW(Handle, "open", ReleaseChannel.FeedbackUrl, null, null, Win.SW_SHOW) <= 32)
             User32.MessageBoxW(Handle, "기본 메일 앱을 열지 못했어요.\n\n" + ReleaseChannel.FeedbackEmail + " 으로 앱 버전(" + Installer.Version + ")과 함께 피드백을 보내주세요.", "피드백 보내기", 0x40);
     }
+
+    void ToggleAutoUpdate()
+    {
+        Settings.AutoUpdate = !Settings.AutoUpdate;
+        AppSettings.Save();
+        if (!Settings.AutoUpdate) CancelUpdateHelper();
+        else BeginUpdateCheck(true);
+    }
+
+    void HandleEditorSetting(Editor.EditorSettingAction action)
+    {
+        switch (action)
+        {
+            case Editor.EditorSettingAction.CheckUpdates: BeginUpdateCheck(true); break;
+            case Editor.EditorSettingAction.ToggleAutoUpdate: ToggleAutoUpdate(); break;
+            case Editor.EditorSettingAction.Feedback: OpenFeedback(); break;
+        }
+    }
 }

@@ -58,11 +58,12 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
     nint _imeContext;
 
     /// <param name="openEntry">캡처 기록 패널에서 항목을 눌렀을 때 그 캡처를 문서로 만들어 준다 (null이면 패널 없음)</param>
-    public EditorWindow(EditorDocument doc, string status, Action onClosed, Func<HistoryEntry, EditorDocument?>? openEntry = null)
+    public EditorWindow(EditorDocument doc, string status, Action onClosed, Func<HistoryEntry, EditorDocument?>? openEntry = null, Action<EditorSettingAction>? settingAction = null)
     {
         _doc = doc;
         _base = doc.Original;
         _onClosed = onClosed;
+        _settingAction = settingAction;
         _openEntry = openEntry;
         _items.AddRange(doc.Items);
         var image = _base;
@@ -99,7 +100,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         _toolbar.Status = status;
         if (restore)
         {
-            int w = Math.Min(settings.EditorWidth, work.Width), h = Math.Min(settings.EditorHeight, work.Height);
+            int w = Math.Min(Math.Max(settings.EditorWidth, _toolbar.MinWidth + (int)(20 * _scale)), work.Width), h = Math.Min(settings.EditorHeight, work.Height);
             int x = Math.Clamp(settings.EditorLeft!.Value, work.Left, work.Right - w);
             int y = Math.Clamp(settings.EditorTop!.Value, work.Top, work.Bottom - h);
             User32.SetWindowPos(Handle, 0, x, y, w, h, Win.SWP_NOZORDER | Win.SWP_NOACTIVATE);
@@ -534,6 +535,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             case ItemKind.Copy: if (_marquee != null) CopyRegion(); else CopyToClipboard(); break;
             case ItemKind.SaveAs: if (_marquee != null) SaveRegion(); else SaveAs(); break;
             case ItemKind.OpenFolder: OpenSaveFolder(); break;
+            case ItemKind.Settings: ShowSettings(); break;
             case ItemKind.Done: Close(); break;
             case ItemKind.History:
                 if (_panel == null) { ShowStatus("이 편집 창에서는 기록을 볼 수 없어요"); break; }
