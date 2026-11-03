@@ -84,6 +84,15 @@ internal static unsafe partial class Installer
     /// <summary>설치(또는 업데이트). 실행 중인 다른 LunaCapture가 있으면 먼저 종료시킨다.</summary>
     public static void Install(bool autoStart)
     {
+        using var updateLock = new Mutex(false, "LunaCapture.UpdateInstaller");
+        bool locked;
+        try { locked = updateLock.WaitOne(0); } catch (AbandonedMutexException) { locked = true; }
+        if (!locked) throw new InvalidOperationException("자동 업데이트를 준비 중입니다. 기존 앱의 작업을 마무리하고 종료한 뒤 다시 시도해 주세요.");
+        try { InstallCore(autoStart); } finally { updateLock.ReleaseMutex(); }
+    }
+
+    static void InstallCore(bool autoStart)
+    {
         CloseForUpdate();
         Directory.CreateDirectory(InstallDir);
         File.Copy(CurrentExe, InstalledExe, overwrite: true);

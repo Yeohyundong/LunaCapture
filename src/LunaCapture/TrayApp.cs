@@ -89,6 +89,8 @@ internal sealed unsafe partial class TrayApp : NativeWindow
                 return 0;
 
             case Win.WM_DESTROY:
+                // Explicit Exit/uninstall must stay closed, even when a helper is waiting.
+                if (!_applyingUpdate) CancelUpdateHelper();
                 User32.UnregisterHotKey(Handle, HotkeyCapture);
                 User32.UnregisterHotKey(Handle, HotkeyHistory);
                 User32.KillTimer(Handle, RetryKeyTimer);
