@@ -10,6 +10,9 @@ $env:PATH = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer;$env:PAT
 
 $csproj = 'src\LunaCapture\LunaCapture.csproj'
 $version = ([xml](Get-Content $csproj -Encoding UTF8)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+$changelog = Get-Content -LiteralPath 'CHANGELOG.json' -Raw -Encoding UTF8 | ConvertFrom-Json
+$currentNotes = @($changelog | Where-Object { $_.version -eq $version })
+if ($currentNotes.Count -ne 1 -or !$currentNotes[0].changes.Count) { throw "CHANGELOG.json에 $version 변경 내역이 필요합니다." }
 Write-Host "LunaCapture $version 빌드 중... (처음에는 몇 분 걸릴 수 있어요)"
 
 dotnet publish $csproj -c Release -r win-x64 -o build\publish
@@ -23,6 +26,8 @@ Copy-Item build\publish\Fonts\*.txt .\ -Force
 New-Item -ItemType Directory -Force dist | Out-Null
 Copy-Item build\publish\LunaCapture.exe dist\ -Force
 Copy-Item build\publish\Fonts\*.txt dist\ -Force
+Copy-Item -LiteralPath CHANGELOG.json -Destination build/publish/CHANGELOG.json -Force
+Copy-Item -LiteralPath CHANGELOG.json -Destination dist/CHANGELOG.json -Force
 
 # 배포 폴더
 $name = "LunaCapture-$version"
@@ -30,6 +35,7 @@ $pkg = Join-Path '배포' $name
 New-Item -ItemType Directory -Force $pkg | Out-Null
 Copy-Item build\publish\LunaCapture.exe $pkg -Force
 Copy-Item build\publish\Fonts\*.txt $pkg -Force
+Copy-Item -LiteralPath CHANGELOG.json -Destination (Join-Path $pkg 'CHANGELOG.json') -Force
 (Get-Content 'tools\사용법.txt' -Raw -Encoding UTF8).Replace('{VERSION}', $version) |
     Set-Content (Join-Path $pkg '사용법.txt') -Encoding UTF8
 

@@ -24,6 +24,7 @@ internal sealed unsafe partial class EditorWindow
             User32.AppendMenuW(menu, Win.MF_SEPARATOR, 0, null);
             User32.AppendMenuW(menu, Check(settings.AutoUpdate), 4, "자동 업데이트 (작업 종료 후 적용)");
             User32.AppendMenuW(menu, Win.MF_STRING, 5, "업데이트 확인");
+            User32.AppendMenuW(menu, Win.MF_STRING, 7, "업데이트 내역");
             User32.AppendMenuW(menu, Win.MF_SEPARATOR, 0, null);
             User32.AppendMenuW(menu, Win.MF_STRING, 6, "이거 고쳐주세요! ✉");
             var button = _toolbar.Items.First(x => x.Kind == ItemKind.Settings).Bounds;
@@ -49,6 +50,9 @@ internal sealed unsafe partial class EditorWindow
                     break;
                 case 6:
                     if (_options == null) _options = new FeedbackWindow(Handle, () => _options = null);
+                    break;
+                case 7:
+                    if (_options == null) _options = new UpdateNotesWindow(Handle, null, () => _options = null);
                     break;
             }
         }

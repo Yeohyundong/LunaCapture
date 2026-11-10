@@ -7,7 +7,7 @@ namespace LunaCapture;
 internal sealed unsafe partial class TrayApp
 {
     const nuint UpdateTimer = 71;
-    const uint CmdCheckUpdate = 170, CmdAutoUpdate = 171, CmdFeedback = 172;
+    const uint CmdCheckUpdate = 170, CmdAutoUpdate = 171, CmdFeedback = 172, CmdUpdateHistory = 173;
     Task<UpdateResult>? _updateCheck;
     PendingUpdate? _pendingUpdate;
     Process? _updateHelper;
@@ -15,6 +15,7 @@ internal sealed unsafe partial class TrayApp
     DateTimeOffset _helperStarted, _nextUpdateCheck = DateTimeOffset.MaxValue;
     bool _manualCheck, _manualApply, _menuOpen, _applyingUpdate;
     bool _finishingCapture, _finishingRecording;
+    Editor.UpdateNotesWindow? _updateNotes;
     bool IsUpdateBusy => _busy || _finishingCapture || _finishingRecording;
 
     void StartUpdates(bool skip)
@@ -32,7 +33,15 @@ internal sealed unsafe partial class TrayApp
             return;
         }
         if (_updateCheck != null) { if (manual) Notify("업데이트 확인 중", "잠시만 기다려 주세요.", Win.NIIF_INFO); return; }
-        if (_pendingUpdate != null) { if (manual) _manualApply = true; if (manual) Notify("업데이트 준비 완료", "편집·녹화·열린 창이 모두 끝나면 자동으로 적용해요.", Win.NIIF_INFO); return; }
+        if (_pendingUpdate != null)
+        {
+            if (manual)
+            {
+                _manualApply = true;
+                ShowUpdateNotes(_pendingUpdate);
+            }
+            return;
+        }
         _manualCheck = manual;
         _manualApply = manual;
         _updateCheck = Task.Run(UpdateService.CheckAsync);
@@ -47,7 +56,14 @@ internal sealed unsafe partial class TrayApp
             var result = completed.GetAwaiter().GetResult();
             _nextUpdateCheck = DateTimeOffset.UtcNow.AddHours(result.Failed ? 1 : 24);
             _pendingUpdate = result.Update;
-            if (_manualCheck || result.Update != null) Notify(result.Update == null ? "업데이트 확인" : "업데이트 준비 완료", result.Message, Win.NIIF_INFO);
+            if (_manualCheck || result.Update != null)
+                Notify(result.Update == null ? "업데이트 확인" : "업데이트 준비 완료", result.Message, Win.NIIF_INFO,
+                    result.Update is { } available ? () => ShowUpdateNotes(available) : null);
+            if (_manualCheck && result.Update != null)
+            {
+                ShowUpdateNotes(result.Update);
+            }
+            _manualCheck = false;
         }
         if (_updateHelper != null && _updateHelper.HasExited)
         {
@@ -101,6 +117,12 @@ internal sealed unsafe partial class TrayApp
     {
         if (_feedback != null) { User32.ForceForeground(_feedback.Handle); return; }
         _feedback = new Editor.FeedbackWindow(Handle, () => _feedback = null);
+    }
+
+    void ShowUpdateNotes(PendingUpdate? update = null)
+    {
+        if (_updateNotes != null) { User32.ForceForeground(_updateNotes.Handle); return; }
+        _updateNotes = new Editor.UpdateNotesWindow(_editor?.Handle ?? Handle, update, () => _updateNotes = null);
     }
 
     void ToggleAutoUpdate()

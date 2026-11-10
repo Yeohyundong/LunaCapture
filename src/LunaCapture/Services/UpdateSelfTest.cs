@@ -71,6 +71,35 @@ internal static class UpdateSelfTest
         UpdateInstaller.ReplaceExecutable(next, target, backup);
         Check(File.ReadAllText(target) == "second" && File.ReadAllText(backup) == "old", "subsequent replacement with an existing backup");
         Check(!UpdateInstaller.IsStageDirectory(dir), "arbitrary helper directory accepted");
-        File.WriteAllText(output, "업데이트 검증 통과: 버전 비교·초안/프리릴리스 제외·URL/크기/SHA-256·안전한 ZIP 추출·작업 중 적용 차단·원자적 교체/백업/복구\n");
+        string skippedVersions = ReleaseNotes.Between(new Version(1, 2, 2), new Version(1, 2, 4));
+        Check(skippedVersions.Contains("1.2.3") && skippedVersions.Contains("1.2.4"), "skipped versions must all be included");
+        Check(!skippedVersions.Contains("1.2.2") && !skippedVersions.Contains("1.2.5"), "exclude current and future versions");
+        Check(skippedVersions.IndexOf("1.2.4", StringComparison.Ordinal) < skippedVersions.IndexOf("1.2.3", StringComparison.Ordinal), "newest notes first");
+        Check(ReleaseNotes.Between(new Version(1, 2, 4), new Version(1, 2, 4)) == "", "no notes for unchanged version");
+        Check(ReleaseNotes.History(new Version(1, 2, 4)).Contains("1.0.0"), "past version history");
+        string notesJson = """
+        [{"version":"9.0.0","date":"2026-11-10","changes":["future update"]},
+        {"version":"8.0.0","date":"2026-11-09","changes":["intermediate update"]}]
+        """;
+        using var notesZip = new MemoryStream();
+        using (var archive = new ZipArchive(notesZip, ZipArchiveMode.Create, true))
+        {
+            foreach (string name in new[] { "LunaCapture.exe", "Pretendard-LICENSE.txt", "LunaSans-NOTICE.txt", "CHANGELOG.json" })
+            {
+                using var writer = new StreamWriter(archive.CreateEntry(name).Open());
+                writer.Write(name == "CHANGELOG.json" ? notesJson : "test");
+            }
+        }
+        string notesStage = Path.Combine(dir, "notes");
+        Directory.CreateDirectory(notesStage);
+        UpdateService.StageArchive(notesZip.ToArray(), notesStage);
+        string downloadedNotes = ReleaseNotes.ForUpdate(new Version(7, 0, 0), new Version(9, 0, 0), notesStage);
+        Check(downloadedNotes.Contains("future update") && downloadedNotes.Contains("intermediate update"), "load future notes from verified ZIP");
+        File.WriteAllText(Path.Combine(notesStage, "CHANGELOG.json"), "invalid");
+        Check(ReleaseNotes.ForUpdate(new Version(1, 2, 2), new Version(1, 2, 4), notesStage).Contains("1.2.3"), "bad notes fall back without blocking updates");
+        Reject(() => ReleaseNotes.Parse(notesJson.Replace("8.0.0", "9.0.0")), "duplicate notes versions accepted");
+        Reject(() => ReleaseNotes.Parse(notesJson.Replace("future update", "")), "empty notes accepted");
+        File.WriteAllText(Path.Combine(dir, "release-notes-example.txt"), skippedVersions);
+        File.WriteAllText(output, "업데이트 검증 통과: 버전 비교·초안/프리릴리스 제외·URL/크기/SHA-256·안전한 ZIP 추출·작업 중 적용 차단·원자적 교체/백업/복구·건너뛴 버전 누적 내역·검증된 ZIP의 새 변경 내역·구버전 ZIP 호환\n");
     }
 }

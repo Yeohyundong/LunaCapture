@@ -418,6 +418,7 @@ internal sealed class NumberAnnotation : Annotation
     public float EffectiveFontSize => FontSize > 0 ? FontSize : Size * MathF.Min(0.5f, 0.82f / Number.ToString().Length);
     public PointF End;
     public bool HasBox;
+    public PointF? BadgePosition;
 
     public override bool IsMeaningful => true;
 
@@ -441,6 +442,7 @@ internal sealed class NumberAnnotation : Annotation
     {
         get
         {
+            if (BadgePosition is { } position) return position;
             if (!HasBox) return Center;
             float margin = Square ? 0 : 2;
             float offset = BadgeSize / 2 + margin + MathF.Max(2, Width) / 2;
@@ -502,6 +504,14 @@ internal sealed class NumberAnnotation : Annotation
     {
         Center = new(Center.X + dx, Center.Y + dy);
         End = new(End.X + dx, End.Y + dy);
+        if (BadgePosition is { } position) BadgePosition = new(position.X + dx, position.Y + dy);
+    }
+
+    public void MoveBadge(float dx, float dy)
+    {
+        if (!HasBox) { Offset(dx, dy); return; }
+        var position = BadgeCenter;
+        BadgePosition = new(position.X + dx, position.Y + dy);
     }
 }
 

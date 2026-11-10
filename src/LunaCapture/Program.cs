@@ -267,6 +267,39 @@ unsafe
             if (restoredQ.Quadrant != q || restoredQ.BadgeCenter.X != c.X || restoredQ.BadgeCenter.Y != c.Y) throw new Exception("사분면 복원 실패");
         }
         log.AppendLine("시작 꼭짓점 기준 4사분면 × 드래그 4방향 반전 및 기록 복원 통과");
+        var movableBadge = new LunaCapture.Editor.NumberAnnotation
+        {
+            Number = 3, Center = new(100, 100), End = new(300, 240),
+            HasBox = true, Size = 32, Square = true, Quadrant = 2,
+        };
+        var originalBadge = movableBadge.BadgeCenter;
+        var beforeBadgeMove = (LunaCapture.Editor.NumberAnnotation)movableBadge.Clone();
+        movableBadge.MoveBadge(-55, 37);
+        if (movableBadge.Center.X != 100 || movableBadge.Center.Y != 100 ||
+            movableBadge.End.X != 300 || movableBadge.End.Y != 240 ||
+            movableBadge.BadgeCenter.X != originalBadge.X - 55 ||
+            movableBadge.BadgeCenter.Y != originalBadge.Y + 37 ||
+            beforeBadgeMove.BadgePosition != null)
+            throw new Exception("번호 단독 이동 및 되돌리기 복사 실패");
+        var savedBadge = LunaCapture.Editor.AnnotationJson.ToDto(movableBadge);
+        var reopenedBadge = (LunaCapture.Editor.NumberAnnotation)LunaCapture.Editor.AnnotationJson.FromDto(savedBadge)!;
+        if (reopenedBadge.BadgeCenter.X != movableBadge.BadgeCenter.X ||
+            reopenedBadge.BadgeCenter.Y != movableBadge.BadgeCenter.Y ||
+            !reopenedBadge.HitBadge(reopenedBadge.BadgeCenter, 0))
+            throw new Exception("번호 이동 위치 저장 및 클릭 판정 실패");
+        reopenedBadge.Offset(20, 30);
+        if (reopenedBadge.Center.X != 120 || reopenedBadge.End.Y != 270 ||
+            reopenedBadge.BadgeCenter.X != movableBadge.BadgeCenter.X + 20 ||
+            reopenedBadge.BadgeCenter.Y != movableBadge.BadgeCenter.Y + 30)
+            throw new Exception("박스와 번호 함께 이동 실패");
+        var movedPosition = reopenedBadge.BadgeCenter;
+        reopenedBadge.ResizeBox(3, new(400, 350));
+        if (reopenedBadge.BadgeCenter.X != movedPosition.X || reopenedBadge.BadgeCenter.Y != movedPosition.Y)
+            throw new Exception("박스 크기 변경 시 사용자 번호 위치 유지 실패");
+        reopenedBadge.BadgePosition = null;
+        if (reopenedBadge.BadgeCenter.X == movedPosition.X && reopenedBadge.BadgeCenter.Y == movedPosition.Y)
+            throw new Exception("번호 기본 위치 복원 실패");
+        log.AppendLine("번호 독립 드래그 · 박스 동반 이동 · 위치 저장/복원 · 크기 변경 · 기본 위치 복원 통과");
         if (oldBadge == null || oldBadge.Square || oldBadge.HasBox) throw new Exception("이전 기록 호환 실패");
         if (LunaCapture.Editor.EditorWindow.NextNumber([new LunaCapture.Editor.NumberAnnotation { Number = 7 }, new LunaCapture.Editor.NumberAnnotation { Number = 7 }, new LunaCapture.Editor.NumberAnnotation { Number = 2 }]) != 8) throw new Exception("중복 번호 후 다음 번호 실패");
         var numberingWithHidden = new List<LunaCapture.Editor.Annotation>

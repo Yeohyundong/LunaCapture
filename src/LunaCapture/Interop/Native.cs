@@ -229,6 +229,9 @@ internal static unsafe partial class User32
     [LibraryImport(Dll)] public static partial int ClientToScreen(nint hwnd, POINT* pt);
     [LibraryImport(Dll)] public static partial nint GetForegroundWindow();
     [LibraryImport(Dll)] public static partial uint GetWindowThreadProcessId(nint hwnd, uint* processId);
+    [LibraryImport(Dll)] public static partial int GetClassNameW(nint hwnd, char* className, int maxCount);
+    [LibraryImport(Dll, StringMarshalling = StringMarshalling.Utf16)]
+    public static partial nint FindWindowExW(nint parent, nint after, string className, string? title);
     [LibraryImport(Dll)] public static partial int AttachThreadInput(uint attach, uint attachTo, int doAttach);
     [LibraryImport(Dll)] public static partial int BringWindowToTop(nint hwnd);
 

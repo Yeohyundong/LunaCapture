@@ -1,6 +1,7 @@
 using LunaCapture.Interop;
 using LunaCapture.Recording;
 using LunaCapture.Services;
+using System.Runtime.InteropServices;
 
 namespace LunaCapture.Capture;
 
@@ -11,6 +12,7 @@ internal sealed class InstallPrompt : PanelWindow
     readonly string _installedVersion;
     readonly Action<bool, bool> _onAnswer; // (설치함, 자동 실행)
     readonly GdiFont _title, _body, _small;
+    nint _notesFont;
     bool _autoStart = true;
     bool _answered;
 
@@ -30,9 +32,20 @@ internal sealed class InstallPrompt : PanelWindow
             _body = new GdiFont(UiFonts.Family, 14 * S, false);
             _small = new GdiFont(UiFonts.Family, 13 * S, false);
 
-            int w = Px(470), h = Px(update ? 236 : 300);
+            int w = Px(update ? 680 : 470), h = Px(update ? 560 : 300);
             var work = mi.rcWork;
             SetBounds(work.Left + (work.Width - w) / 2, work.Top + (work.Height - h) / 2, w, h);
+        }
+        if (update)
+        {
+            var current = Version.TryParse(installedVersion, out var parsed) ? parsed : new Version(0, 0, 0);
+            string notes = ReleaseNotes.Between(current, Version.Parse(Installer.Version));
+            nint viewer = User32.CreateWindowExW(0x200, "EDIT", "", 0x50210844,
+                Px(24), Px(174), Px(632), Px(294), Handle, 302, Kernel32.GetModuleHandleW(0), 0);
+            _notesFont = Gdi32.CreateFontW(-Px(15), 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0, "맑은 고딕");
+            SendMessageW(viewer, 0x30 /* WM_SETFONT */, _notesFont, 1);
+            SendMessageW(viewer, 0xC5 /* EM_SETLIMITTEXT */, Math.Max(32767, notes.Length + 1), 0);
+            SetWindowTextW(viewer, notes);
         }
         User32.ShowWindow(Handle, Win.SW_SHOW);
         User32.ForceForeground(Handle);
@@ -53,11 +66,11 @@ internal sealed class InstallPrompt : PanelWindow
 
         if (_update)
         {
-            g.Text("새 버전으로 바꿀까요?", _body, TextMain, pad, y);
+            g.Text("새 버전 업데이트", _body, TextMain, pad, y);
             y += Px(26);
-            g.Text("· 실행 중인 LunaCapture는 잠시 종료됐다가 새 버전으로 다시 켜져요", _small, TextSub, pad, y);
+            g.Text("· 업데이트 후 앱 다시 시작", _small, TextSub, pad, y);
             y += Px(21);
-            g.Text("· 설정과 찍어 둔 파일은 그대로 남아요", _small, TextSub, pad, y);
+            g.Text("· 설정·저장 파일 유지", _small, TextSub, pad, y);
         }
         else
         {
@@ -117,6 +130,17 @@ internal sealed class InstallPrompt : PanelWindow
         }
         return base.WndProc(msg, wParam, lParam);
     }
+
+    protected override void OnDestroyed()
+    {
+        if (_notesFont != 0) Gdi32.DeleteObject(_notesFont);
+        base.OnDestroyed();
+    }
+
+    [DllImport("user32.dll")]
+    static extern nint SendMessageW(nint hwnd, uint message, nint wParam, nint lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    static extern int SetWindowTextW(nint hwnd, string text);
 
     /// <summary>앱 아이콘을 작은 크기로 그려 넣는다.</summary>
     sealed unsafe class IconPainter(Gfx g) : IDisposable

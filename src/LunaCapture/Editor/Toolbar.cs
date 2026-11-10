@@ -71,15 +71,15 @@ internal sealed class Toolbar : IDisposable
             x += w + gap;
         }
 
-        Add(ItemKind.Tool, (int)Tool.Rect, btn, "도형 (R) · 더블클릭하면 글자 넣기");
+        Add(ItemKind.Tool, (int)Tool.Rect, btn, "도형 (R) · 다시 누르면 옵션 열기/닫기 · 더블클릭하면 글자 넣기");
         Add(ItemKind.Tool, (int)Tool.Select, btn, "영역 선택 (E) · 복사·저장·오려내기·자르기·강조 · Ctrl+A 전체");
         Add(ItemKind.Tool, (int)Tool.Arrow, btn, "화살표 (A)");
         Add(ItemKind.Tool, (int)Tool.Pen, btn, "펜 (P)");
         Add(ItemKind.Tool, (int)Tool.Highlighter, btn, "형광펜 (H)");
         Add(ItemKind.Tool, (int)Tool.Text, btn, "텍스트 (T)");
-        Add(ItemKind.Tool, (int)Tool.Bubble, btn, "말풍선 (B)");
-        Add(ItemKind.Tool, (int)Tool.Number, btn, "번호 (N)");
-        Add(ItemKind.Tool, (int)Tool.Sticker, btn, "스티커 (S)");
+        Add(ItemKind.Tool, (int)Tool.Bubble, btn, "말풍선 (B) · 다시 누르면 옵션 열기/닫기");
+        Add(ItemKind.Tool, (int)Tool.Number, btn, "번호 (N) · 다시 누르면 옵션 열기/닫기 · Esc로 접기");
+        Add(ItemKind.Tool, (int)Tool.Sticker, btn, "스티커 (S) · 다시 누르면 옵션 열기/닫기");
         Add(ItemKind.Tool, (int)Tool.Mosaic, btn, "모자이크 (M)");
         x += sep;
         Add(ItemKind.Color, 0, S(36), "색상 팔레트 · 맞춤 색상 · 추천 색상");

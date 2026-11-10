@@ -11,6 +11,7 @@ internal sealed class EditorDocument
     public required PixelImage Original { get; init; }
     public List<Annotation> Items { get; init; } = [];
     public string? HistoryId { get; init; }
+    public string? SuggestedFileName { get; init; }
     /// <summary>바뀐 결과 저장: (완성 이미지, 원본 — 자르기를 했으면 잘린 원본, 최종 주석 목록)</summary>
     public required Action<PixelImage, PixelImage, List<Annotation>> Save { get; init; }
 }

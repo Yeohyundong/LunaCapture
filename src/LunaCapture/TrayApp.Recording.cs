@@ -20,13 +20,14 @@ internal sealed partial class TrayApp
     RecordingBar? _recBar;
     ScreenRecorder? _recorder;
     RECT _recRect;
+    string? _recAppName;
     PixelImage? _recThumb; // 기록용 미리보기 (녹화 시작 순간의 영역)
     RecordKind _recKind;
 
     bool IsRecording => _recorder != null;
 
     /// <summary>캡처 화면의 녹화 모드에서 영역을 고르면 → 녹화 설정 창 (여기서 GIF/동영상을 고른다).</summary>
-    void OpenRecordSetup(RECT r)
+    void OpenRecordSetup(RECT r, string? appName)
     {
         if (r.Width < 16 || r.Height < 16)
         {
@@ -38,6 +39,7 @@ internal sealed partial class TrayApp
         try
         {
             _recRect = r;
+            _recAppName = appName;
             var estimator = GifEstimator.Measure(r); // GIF 용량 추정용: 테두리·설정창이 뜨기 전에 화면을 측정
             _recFrame = new RegionFrame(r, FrameSetupColor);
             _recSetup = new RecordSetupWindow(estimator, BeginRecording, CancelRecordSetup);
@@ -66,7 +68,7 @@ internal sealed partial class TrayApp
             string folder = _recKind == RecordKind.Gif ? SaveFolder : VideoFolder;
             Directory.CreateDirectory(folder);
             string ext = _recKind == RecordKind.Gif ? "gif" : "mp4";
-            string path = Path.Combine(folder, $"Luna_{DateTime.Now:yyyyMMdd_HHmmss}.{ext}");
+            string path = Path.Combine(folder, CaptureFileName.Create(_recAppName, DateTime.Now, ext));
 
             Func<int, int, IFrameSink> sink = _recKind == RecordKind.Gif
                 ? (w, h) => new GifSink(path, w, h, options.LimitBytes)

@@ -27,7 +27,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
     readonly Stack<(PixelImage Base, List<Annotation> Items)> _undo = new(), _redo = new();
 
     // 선택 (그려 둔 주석을 클릭해서 옮기거나 고치기)
-    enum DragMode { None, Draw, Move, Handle, Marquee, MarqueeMove }
+    enum DragMode { None, Draw, Move, BadgeMove, Handle, Marquee, MarqueeMove }
     Annotation? _selected;
     DragMode _mode;
     int _handle = -1;
@@ -141,6 +141,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         _selected = null;
         _active = null;
         _marquee = null;
+        _stripOpen = false;
         if (_panel != null) { _panel.CurrentId = doc.HistoryId; _panel.RevealCurrent(); }
         SetBase(_base);
         ShowStatus("기록에서 열었어요 · 고치면 원래 파일에 다시 저장돼요");
@@ -340,7 +341,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             DragMarquee(p);
             return;
         }
-        if (_mode is DragMode.Move or DragMode.Handle)
+        if (_mode is DragMode.Move or DragMode.BadgeMove or DragMode.Handle)
         {
             DragSelected(p);
             return;
@@ -372,6 +373,11 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             return;
         }
         if (HasStrip && StripRect() is var strip && x >= strip.Left && x < strip.Right && y >= strip.Top && y < strip.Bottom) return;
+        if (_stripOpen)
+        {
+            _stripOpen = false;
+            Invalidate();
+        }
         if (PanelShown && _panel!.Contains(x, y))
         {
             OnPanelClick(x, y);
@@ -492,7 +498,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             id = 32646;
         else if (_selected != null && HitHandle(pt.X, pt.Y) is var h and >= 0)
             id = HandleCursor(_selected, h);
-        else if (_mode == DragMode.Move || (_active == null && HitItem(ToImage(pt.X, pt.Y)) is { } hover && (_tool != Tool.Select || SelectToolPicks(hover))))
+        else if (_mode is DragMode.Move or DragMode.BadgeMove || (_active == null && HitItem(ToImage(pt.X, pt.Y)) is { } hover && (_tool != Tool.Select || SelectToolPicks(hover))))
             id = 32646; // IDC_SIZEALL: 옮기기
         else
             id = _tool is Tool.Text or Tool.Bubble ? Win.IDC_IBEAM : Win.IDC_CROSS;
@@ -549,6 +555,12 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
 
     void OnKeyDown(int vk)
     {
+        if (vk == Win.VK_ESCAPE && HasStrip)
+        {
+            _stripOpen = false;
+            Invalidate();
+            return;
+        }
         if (_numberEditing != null)
         {
             if (vk == Win.VK_RETURN) FinishNumberEdit(true);
@@ -640,10 +652,18 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
 
     void SetTool(Tool tool)
     {
+        if (StripMode != 0 && tool == StripTool)
+        {
+            _tool = tool;
+            _stripOpen = !_stripOpen;
+            Invalidate();
+            return;
+        }
         CommitText();
         _tool = tool;
         _selected = null;
         _marquee = null;
+        _stripOpen = StripMode != 0;
         Invalidate();
     }
 
@@ -724,7 +744,9 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         }
     }
 
-    bool HasStrip => StripMode != 0;
+    bool _stripOpen;
+    bool HasStrip => _stripOpen && StripMode != 0;
+    Tool StripTool => StripMode switch { 1 => Tool.Sticker, 2 => Tool.Bubble, 4 => Tool.Number, _ => Tool.Rect };
     int StripCount => StripMode switch { 1 => Stickers.All.Length, 2 => Stickers.Tails.Length, 4 => 3, _ => ShapeStyles.Length };
     int StripSelected => StripMode switch
     {
@@ -745,7 +767,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         int w = cell * columns + pad * 2, h = cell * (StripMode == 3 ? 3 : 1) + pad * 2;
         if (StripMode == 4) { w = (int)(220 * _scale); h = (int)(240 * _scale); }
         int x = (int)(8 * _scale);
-        var anchor = StripMode switch { 1 => Tool.Sticker, 2 => Tool.Bubble, 4 => Tool.Number, _ => Tool.Rect };
+        var anchor = StripTool;
         foreach (var it in _toolbar.Items)
             if (it.Kind == ItemKind.Tool && it.Value == (int)anchor) x = Math.Max(x, it.Bounds.Left - w / 2 + it.Bounds.Width / 2);
         x = Math.Min(x, Math.Max(0, _clientW - w - (int)(8 * _scale)));
@@ -778,6 +800,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
 
     void OnStripClick(int i)
     {
+        if (StripMode != 4) _stripOpen = false;
         if (StripMode == 4 && i >= 10)
         {
             if (i is >= 20 and < 30)
@@ -787,7 +810,11 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             }
             if (_selected is NumberAnnotation) PushUndo();
             AppSettings.Current.NumberQuadrant = i - 30;
-            if (_selected is NumberAnnotation n) n.Quadrant = i - 30;
+            if (_selected is NumberAnnotation n)
+            {
+                n.Quadrant = i - 30;
+                n.BadgePosition = null;
+            }
             AppSettings.Save();
             if (_selected != null) RebuildCommitted();
             Invalidate(); return;
@@ -1126,7 +1153,9 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
 
         if (_selected != item) ShowStatus("Ctrl+↑ 앞으로 · Ctrl+↓ 뒤로 · Shift와 함께 맨 앞/뒤 · Del 삭제 · 오른쪽 클릭 메뉴");
         _selected = item;
-        BeginDrag(DragMode.Move, p);
+        bool moveBadge = item is NumberAnnotation badge && badge.HitBadge(p, 2 / _zoom);
+        if (moveBadge) ShowStatus("번호 드래그: 번호만 이동 · 박스 테두리 드래그: 함께 이동 · 더블클릭: 번호 수정");
+        BeginDrag(moveBadge ? DragMode.BadgeMove : DragMode.Move, p);
         Invalidate();
         return true;
     }
@@ -1224,7 +1253,12 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             PushUndo(); // 실제로 움직이기 시작할 때 한 번만
             _dragChanged = true;
         }
-        if (_mode == DragMode.Move)
+        if (_mode == DragMode.BadgeMove && _selected is NumberAnnotation badge)
+        {
+            badge.MoveBadge(p.X - _dragLast.X, p.Y - _dragLast.Y);
+            _dragLast = p;
+        }
+        else if (_mode == DragMode.Move)
         {
             _selected.Offset(p.X - _dragLast.X, p.Y - _dragLast.Y);
             _dragLast = p;
@@ -1465,7 +1499,8 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
 
     void SaveImageAs(PixelImage image)
     {
-        string? path = FileDialog.SavePng(Handle, $"Luna_{DateTime.Now:yyyyMMdd_HHmmss}.png");
+        string? path = FileDialog.SavePng(Handle, _doc.SuggestedFileName ??
+            LunaCapture.Capture.CaptureFileName.Create(null, DateTime.Now, "png"));
         if (path == null) return;
         try
         {

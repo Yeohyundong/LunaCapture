@@ -75,7 +75,7 @@ internal sealed unsafe partial class EditorWindow
         Invalidate();
     }
 
-    static bool SelectToolPicks(Annotation a) => a is ImageAnnotation or SpotlightAnnotation;
+    static bool SelectToolPicks(Annotation a) => a is ImageAnnotation or SpotlightAnnotation or NumberAnnotation;
 
     void DragMarquee(PointF p)
     {

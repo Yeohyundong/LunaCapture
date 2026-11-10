@@ -6,7 +6,7 @@ namespace LunaCapture.Capture;
 internal enum CaptureMode { Image, Record }
 
 /// <summary>오버레이 결과: 고른 모드, 화면 좌표 영역, (이미지 모드면) 잘라낸 이미지.</summary>
-internal sealed record OverlayResult(CaptureMode Mode, RECT ScreenRect, PixelImage? Image);
+internal sealed record OverlayResult(CaptureMode Mode, RECT ScreenRect, PixelImage? Image, string? AppName);
 
 /// <summary>
 /// 화면을 정지시킨 뒤 어둡게 덮고, 드래그(영역) 또는 클릭(창)으로 캡처 범위를 고르게 하는 전체화면 오버레이.
@@ -24,7 +24,7 @@ internal sealed unsafe class RegionOverlay : NativeWindow
     readonly Action<OverlayResult?> _onDone;
     CaptureMode _mode;
     readonly int _originX, _originY;
-    readonly List<RECT> _windowRects;
+    readonly List<(nint Handle, RECT Bounds)> _windows;
     readonly RECT _homeMonitor; // 모드 버튼을 띄울 모니터 (열 때 커서가 있던 곳)
     readonly RECT[] _modeRects = new RECT[ModeCount];
 
@@ -48,7 +48,7 @@ internal sealed unsafe class RegionOverlay : NativeWindow
         int h = User32.GetSystemMetrics(Win.SM_CYVIRTUALSCREEN);
 
         // 오버레이를 띄우기 전에 화면과 창 목록을 먼저 얼려둔다.
-        _windowRects = CollectWindowRects(w, h);
+        _windows = CollectWindows(w, h);
         _frozen = GdiSurface.CaptureScreen(_originX, _originY, w, h);
         _dim = MakeDimmed(_frozen);
         _back = new GdiSurface(w, h);
@@ -69,7 +69,7 @@ internal sealed unsafe class RegionOverlay : NativeWindow
         POINT pt;
         User32.GetCursorPos(&pt);
         _cursor = ToLocal(pt);
-        _selection = HitWindow(_cursor);
+        _selection = HitWindow(_cursor)?.Bounds;
         _homeMonitor = MonitorAt(_cursor);
         LayoutModeButtons();
 
@@ -133,7 +133,7 @@ internal sealed unsafe class RegionOverlay : NativeWindow
                 }
                 else
                 {
-                    _selection = HitWindow(_cursor);
+                    _selection = HitWindow(_cursor)?.Bounds;
                 }
                 Invalidate();
                 return 0;
@@ -151,12 +151,21 @@ internal sealed unsafe class RegionOverlay : NativeWindow
             }
 
             case Win.WM_LBUTTONUP:
+            {
                 if (!_mouseDown) return 0;
                 _mouseDown = false;
                 User32.ReleaseCapture();
                 // 드래그했으면 그 영역, 클릭만 했으면 커서 아래 창.
-                if (_selection is { } sel && sel.Width > 1 && sel.Height > 1) Finish(sel);
+                var end = new POINT { X = Win.LoWord(lParam), Y = Win.HiWord(lParam) };
+                if (_dragging)
+                {
+                    var bounds = Normalize(_start, end);
+                    if (bounds.Width > 1 && bounds.Height > 1) Finish(bounds, area: true);
+                }
+                else if (HitWindow(end) is { } window)
+                    Finish(window.Bounds, window.Handle);
                 return 0;
+            }
 
             case Win.WM_RBUTTONUP:
                 Finish(null);
@@ -182,7 +191,7 @@ internal sealed unsafe class RegionOverlay : NativeWindow
         return base.WndProc(msg, wParam, lParam);
     }
 
-    void Finish(RECT? rect)
+    void Finish(RECT? rect, nint window = 0, bool area = false)
     {
         if (_finished) return;
         _finished = true;
@@ -198,7 +207,17 @@ internal sealed unsafe class RegionOverlay : NativeWindow
         if (clipped is { } c)
         {
             var screen = new RECT(c.Left + _originX, c.Top + _originY, c.Right + _originX, c.Bottom + _originY);
-            result = new OverlayResult(_mode, screen, _mode == CaptureMode.Image ? _frozen!.Crop(c) : null);
+            if (area)
+            {
+                var center = new POINT { X = c.Left + c.Width / 2, Y = c.Top + c.Height / 2 };
+                var monitor = MonitorAt(center);
+                bool fullDesktop = c.Width == _frozen!.Width && c.Height == _frozen.Height;
+                bool fullMonitor = c.Left == monitor.Left && c.Top == monitor.Top &&
+                    c.Right == monitor.Right && c.Bottom == monitor.Bottom;
+                if (!fullDesktop && !fullMonitor) window = HitWindow(center)?.Handle ?? 0;
+            }
+            result = new OverlayResult(_mode, screen, _mode == CaptureMode.Image ? _frozen!.Crop(c) : null,
+                CaptureFileName.AppName(window));
         }
         Destroy();
         _onDone(result);
@@ -373,10 +392,13 @@ internal sealed unsafe class RegionOverlay : NativeWindow
 
     void Invalidate() => User32.InvalidateRect(Handle, null, 0);
 
-    RECT? HitWindow(POINT p)
+    (nint Handle, RECT Bounds)? HitWindow(POINT p)
     {
-        foreach (var r in _windowRects)
-            if (p.X >= r.Left && p.X < r.Right && p.Y >= r.Top && p.Y < r.Bottom) return r;
+        foreach (var window in _windows)
+        {
+            var r = window.Bounds;
+            if (p.X >= r.Left && p.X < r.Right && p.Y >= r.Top && p.Y < r.Bottom) return window;
+        }
         return null;
     }
 
@@ -389,9 +411,9 @@ internal sealed unsafe class RegionOverlay : NativeWindow
         new(Math.Max(0, r.Left), Math.Max(0, r.Top), Math.Min(w, r.Right), Math.Min(h, r.Bottom));
 
     /// <summary>보이는 최상위 창들의 실제 경계(그림자 제외)를 z-order 순서로 모은다.</summary>
-    List<RECT> CollectWindowRects(int w, int h)
+    List<(nint Handle, RECT Bounds)> CollectWindows(int w, int h)
     {
-        var list = new List<RECT>();
+        var list = new List<(nint Handle, RECT Bounds)>();
         for (nint hwnd = User32.GetTopWindow(0); hwnd != 0; hwnd = User32.GetWindow(hwnd, Win.GW_HWNDNEXT))
         {
             if (User32.IsWindowVisible(hwnd) == 0 || User32.IsIconic(hwnd) != 0) continue;
@@ -406,7 +428,7 @@ internal sealed unsafe class RegionOverlay : NativeWindow
                 User32.GetWindowRect(hwnd, &r);
 
             r = Clip(new RECT(r.Left - _originX, r.Top - _originY, r.Right - _originX, r.Bottom - _originY), w, h);
-            if (r.Width > 8 && r.Height > 8) list.Add(r);
+            if (r.Width > 8 && r.Height > 8) list.Add((hwnd, r));
         }
         return list;
     }

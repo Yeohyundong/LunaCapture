@@ -131,10 +131,10 @@ internal sealed unsafe partial class TrayApp : NativeWindow
         switch (result?.Mode)
         {
             case CaptureMode.Image:
-                OnRegionCaptured(result.Image);
+                OnRegionCaptured(result.Image, result.AppName);
                 break;
             case CaptureMode.Record:
-                OpenRecordSetup(result.ScreenRect);
+                OpenRecordSetup(result.ScreenRect, result.AppName);
                 break;
             default:
                 _busy = false;
@@ -143,13 +143,13 @@ internal sealed unsafe partial class TrayApp : NativeWindow
         }
     }
 
-    void OnRegionCaptured(PixelImage? image)
+    void OnRegionCaptured(PixelImage? image, string? appName)
     {
         _finishingCapture = true;
-        try { OnRegionCapturedCore(image); } finally { _finishingCapture = false; }
+        try { OnRegionCapturedCore(image, appName); } finally { _finishingCapture = false; }
     }
 
-    void OnRegionCapturedCore(PixelImage? image)
+    void OnRegionCapturedCore(PixelImage? image, string? appName)
     {
         _busy = false;
         if (image == null)
@@ -159,6 +159,7 @@ internal sealed unsafe partial class TrayApp : NativeWindow
         }
 
         string? path = null, histId = null;
+        string fileName = CaptureFileName.Create(appName, DateTime.Now, "png");
         // 이전 편집본을 먼저 저장한다. 이후 새 캡처를 복사해야 클립보드도 최신 캡처를 유지한다.
         if (Settings.OpenEditor) _editor?.Close();
         bool copied = false;
@@ -166,7 +167,7 @@ internal sealed unsafe partial class TrayApp : NativeWindow
         {
             // 편집기를 열더라도 원본은 먼저 복사·저장해 둔다 (편집기를 안 써도 바로 붙여넣기 가능).
             copied = ClipboardService.SetImage(Handle, image);
-            path = SaveImage(image, null);
+            path = SaveImage(image, Path.Combine(SaveFolder, fileName));
             histId = HistoryStore.AddImage(image, path);
         }
         catch (Exception ex)
@@ -181,7 +182,7 @@ internal sealed unsafe partial class TrayApp : NativeWindow
             {
                 string status = (copied ? "클립보드에 복사했고, " : "") + (path != null ? "자동 저장했어요" : "저장하지 못했어요");
                 var savedPath = path;
-                OpenEditor(MakeDocument(image, [], savedPath, histId), status);
+                OpenEditor(MakeDocument(image, [], savedPath, histId, fileName), status);
                 return;
             }
             catch (Exception ex)
@@ -197,7 +198,7 @@ internal sealed unsafe partial class TrayApp : NativeWindow
     }
 
     /// <summary>편집기 문서: 바뀐 게 있으면 같은 파일에 덮어쓰고 클립보드·캡처 기록도 갱신한다.</summary>
-    EditorDocument MakeDocument(PixelImage original, List<Annotation> items, string? savedPath, string? historyId)
+    EditorDocument MakeDocument(PixelImage original, List<Annotation> items, string? savedPath, string? historyId, string? fileName = null)
     {
         string? path = savedPath;
         var savedOriginal = original;
@@ -206,12 +207,14 @@ internal sealed unsafe partial class TrayApp : NativeWindow
             Original = original,
             Items = items,
             HistoryId = historyId,
+            SuggestedFileName = fileName ?? Path.GetFileName(savedPath),
             Save = (edited, newOriginal, finalItems) =>
             {
                 try
                 {
                     ClipboardService.SetImage(Handle, edited);
-                    path = SaveImage(edited, path);
+                    path = SaveImage(edited, path ?? Path.Combine(SaveFolder,
+                        fileName ?? CaptureFileName.Create(null, DateTime.Now, "png")));
                     // 자르기로 원본이 바뀌었을 때만 원본 파일도 다시 쓴다
                     var changed = ReferenceEquals(newOriginal, savedOriginal) ? null : newOriginal;
                     savedOriginal = newOriginal;
@@ -242,9 +245,8 @@ internal sealed unsafe partial class TrayApp : NativeWindow
         return original == null ? null : MakeDocument(original, HistoryStore.LoadItems(e), e.FilePath, e.Id);
     }
 
-    string SaveImage(PixelImage image, string? path)
+    string SaveImage(PixelImage image, string path)
     {
-        path ??= Path.Combine(SaveFolder, $"Luna_{DateTime.Now:yyyyMMdd_HHmmss_fff}.png");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         PngEncoder.Save(image, path);
         _lastSavedPath = path;
@@ -277,6 +279,7 @@ internal sealed unsafe partial class TrayApp : NativeWindow
         User32.AppendMenuW(menu, Win.MF_STRING, CmdOpenVideoFolder, "동영상 폴더 열기");
 
         User32.AppendMenuW(menu, Win.MF_STRING, CmdCheckUpdate, "업데이트 확인");
+        User32.AppendMenuW(menu, Win.MF_STRING, CmdUpdateHistory, "업데이트 내역");
         User32.AppendMenuW(menu, Win.MF_STRING, CmdFeedback, "이거 고쳐주세요! ✉");
         nint settings = User32.CreatePopupMenu();
         uint Check(bool on) => Win.MF_STRING | (on ? Win.MF_CHECKED : 0);
@@ -318,6 +321,7 @@ internal sealed unsafe partial class TrayApp : NativeWindow
         switch (cmd)
         {
             case CmdCheckUpdate: BeginUpdateCheck(true); break;
+            case CmdUpdateHistory: ShowUpdateNotes(); break;
             case CmdFeedback: OpenFeedback(); break;
             case CmdAutoUpdate:
                 ToggleAutoUpdate();

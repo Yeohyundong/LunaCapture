@@ -7,7 +7,7 @@ using System.Text.Json;
 
 namespace LunaCapture.Services;
 
-internal sealed record PendingUpdate(string Directory, string Exe, string Version, string Sha256);
+internal sealed record PendingUpdate(string Directory, string Exe, string Version, string Sha256, string Notes = "");
 internal sealed record UpdateResult(PendingUpdate? Update, string Message, bool Failed = false);
 
 /// <summary>Only downloads/stages files. UI thread separately decides when it is safe to restart.</summary>
@@ -48,7 +48,8 @@ internal static class UpdateService
             if (new Version(version.FileMajorPart, version.FileMinorPart, version.FileBuildPart) != Version.Parse(release.Value.Version))
                 throw new InvalidDataException("업데이트 파일 버전이 Release 버전과 다릅니다");
             string hash = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(exe).ConfigureAwait(false)));
-            return new(new PendingUpdate(dir, exe, release.Value.Version, hash), "새 버전을 준비했어요. 작업이 끝나면 자동으로 적용돼요");
+            string notes = ReleaseNotes.ForUpdate(current, Version.Parse(release.Value.Version), dir);
+            return new(new PendingUpdate(dir, exe, release.Value.Version, hash, notes), "새 버전을 준비했어요. 작업이 끝나면 자동으로 적용돼요");
         }
         catch (Exception ex) { Log.Error(ex); return new(null, "업데이트를 확인하지 못했어요. 기존 버전은 계속 사용할 수 있어요", true); }
     }
@@ -86,6 +87,15 @@ internal static class UpdateService
             using var input = entries[0].Open();
             using var output = new FileStream(Path.Combine(dir, name), FileMode.CreateNew, FileAccess.Write);
             CopyLimited(input, output, name.EndsWith(".exe") ? MaxDownload : 1024 * 1024);
+        }
+        var changelogs = zip.Entries.Where(e => e.FullName == "CHANGELOG.json").ToArray();
+        if (changelogs.Length > 1 || (changelogs.Length == 1 && changelogs[0].Length > ReleaseNotes.MaxBytes))
+            throw new InvalidDataException("변경 이력 파일이 잘못되었습니다.");
+        if (changelogs.Length == 1)
+        {
+            using var input = changelogs[0].Open();
+            using var output = new FileStream(Path.Combine(dir, "CHANGELOG.json"), FileMode.CreateNew, FileAccess.Write);
+            CopyLimited(input, output, ReleaseNotes.MaxBytes);
         }
         return Path.Combine(dir, "LunaCapture.exe");
     }
