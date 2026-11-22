@@ -1,4 +1,5 @@
 using LunaCapture.Interop;
+using LunaCapture.Capture;
 using LunaCapture.Services;
 
 namespace LunaCapture.Editor;
@@ -21,6 +22,7 @@ internal sealed unsafe partial class EditorWindow
             User32.AppendMenuW(menu, Check(settings.OpenEditor), 1, "캡처 후 편집 창 열기");
             User32.AppendMenuW(menu, Check(settings.OpenGifTrim), 2, "GIF 녹화 후 자르기 창 열기");
             User32.AppendMenuW(menu, Win.MF_STRING, 3, "이미지·GIF 저장 폴더 변경…");
+            CaptureFileNameMenu.AppendTo(menu);
             User32.AppendMenuW(menu, Win.MF_SEPARATOR, 0, null);
             User32.AppendMenuW(menu, Check(settings.AutoUpdate), 4, "자동 업데이트 (작업 종료 후 적용)");
             User32.AppendMenuW(menu, Win.MF_STRING, 5, "업데이트 확인");
@@ -32,6 +34,7 @@ internal sealed unsafe partial class EditorWindow
             User32.ClientToScreen(Handle, &position);
             uint command = (uint)User32.TrackPopupMenu(menu, Win.TPM_RIGHTBUTTON | Win.TPM_RETURNCMD | Win.TPM_NONOTIFY,
                 position.X, position.Y, 0, Handle, 0);
+            if (CaptureFileNameMenu.TryApply(command)) return;
             switch (command)
             {
                 case 1: settings.OpenEditor = !settings.OpenEditor; AppSettings.Save(); break;

@@ -1,8 +1,11 @@
 using System.Diagnostics;
 using System.Globalization;
 using LunaCapture.Interop;
+using LunaCapture.Services;
 
 namespace LunaCapture.Capture;
+
+internal enum CaptureNameStyle { AppFirst, DateFirst, LunaOnly }
 
 internal static unsafe class CaptureFileName
 {
@@ -44,14 +47,20 @@ internal static unsafe class CaptureFileName
         catch (System.ComponentModel.Win32Exception) { return null; }
     }
 
-    public static string Create(string? appName, DateTime time, string extension)
+    public static string Create(string? appName, DateTime time, string extension, CaptureNameStyle? style = null)
     {
+        style ??= AppSettings.Current.FileNameStyle;
+        string timestamp = time.ToString("yyyyMMdd_HHmmss_fff", CultureInfo.InvariantCulture);
+        if (style == CaptureNameStyle.LunaOnly) return $"Luna_{timestamp}.{extension}";
+
         var invalid = Path.GetInvalidFileNameChars();
         string prefix = appName == null ? "" : string.Concat(appName.Select(c => c == '.' || invalid.Contains(c) ? '_' : c));
         if (prefix.Length > 80)
             prefix = prefix[..(char.IsHighSurrogate(prefix[79]) ? 79 : 80)];
         prefix = prefix.Trim(' ', '.', '_');
         if (prefix.Length == 0) prefix = "Luna";
-        return prefix + "_" + time.ToString("yyyyMMdd_HHmmss_fff", CultureInfo.InvariantCulture) + "." + extension;
+        return style == CaptureNameStyle.DateFirst
+            ? $"{timestamp}_{prefix}.{extension}"
+            : $"{prefix}_{timestamp}.{extension}";
     }
 }

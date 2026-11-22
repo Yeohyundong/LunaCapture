@@ -297,6 +297,7 @@ internal sealed unsafe partial class TrayApp : NativeWindow
         User32.AppendMenuW(settings, Win.MF_SEPARATOR, 0, null);
         User32.AppendMenuW(settings, Win.MF_STRING, CmdChangeImageFolder, "이미지·GIF 저장 폴더 바꾸기…\t" + ShortPath(SaveFolder));
         User32.AppendMenuW(settings, Win.MF_STRING, CmdChangeVideoFolder, "동영상 저장 폴더 바꾸기…\t" + ShortPath(VideoFolder));
+        CaptureFileNameMenu.AppendTo(settings);
         User32.AppendMenuW(settings, Win.MF_SEPARATOR, 0, null);
         User32.AppendMenuW(settings, Check(Settings.PrintScreenTakeover == true), CmdToggleTakeover, "PrtSc 키를 LunaCapture가 우선 사용");
         User32.AppendMenuW(settings, Check(StartupRegistration.IsEnabled), CmdToggleStartup, "Windows 시작 시 자동 실행");
@@ -317,6 +318,7 @@ internal sealed unsafe partial class TrayApp : NativeWindow
             pt.X, pt.Y, 0, Handle, 0);
         User32.PostMessageW(Handle, Win.WM_NULL, 0, 0);
         User32.DestroyMenu(menu);
+        if (CaptureFileNameMenu.TryApply(cmd)) return;
 
         switch (cmd)
         {

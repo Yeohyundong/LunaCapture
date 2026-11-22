@@ -1,5 +1,6 @@
 ﻿using System.Text.Json;
 using System.Text.Json.Serialization;
+using LunaCapture.Capture;
 
 namespace LunaCapture.Services;
 
@@ -17,6 +18,7 @@ internal sealed class AppSettings
     public bool? PrintScreenTakeover { get; set; }
     public string? ImageFolder { get; set; }
     public string? VideoFolder { get; set; }
+    public CaptureNameStyle FileNameStyle { get; set; } = CaptureNameStyle.AppFirst;
 
     /// <summary>캡처 기록 보관 개수 (0 = 기록 안 함)</summary>
     public int HistoryMax { get; set; } = 100;

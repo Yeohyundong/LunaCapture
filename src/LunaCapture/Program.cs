@@ -318,6 +318,12 @@ unsafe
             || LunaCapture.Editor.ColorPaletteWindow.TryParseHex("#oops", out _)) throw new Exception("HEX 변환 실패");
         if (Environment.GetEnvironmentVariable("LUNA_SETTINGS_DIR") != null)
         {
+            var captureTime = new DateTime(2026, 11, 13, 14, 30, 52, 123);
+            if (LunaCapture.Capture.CaptureFileName.Create("Chrome", captureTime, "png", LunaCapture.Capture.CaptureNameStyle.AppFirst) != "Chrome_20261113_143052_123.png" ||
+                LunaCapture.Capture.CaptureFileName.Create("Chrome", captureTime, "gif", LunaCapture.Capture.CaptureNameStyle.DateFirst) != "20261113_143052_123_Chrome.gif" ||
+                LunaCapture.Capture.CaptureFileName.Create("Chrome", captureTime, "mp4", LunaCapture.Capture.CaptureNameStyle.LunaOnly) != "Luna_20261113_143052_123.mp4")
+                throw new Exception("저장 파일 이름 형식 오류");
+            LunaCapture.Services.AppSettings.Current.FileNameStyle = LunaCapture.Capture.CaptureNameStyle.DateFirst;
             LunaCapture.Services.AppSettings.Current.SelectedColor = rgba;
             LunaCapture.Services.AppSettings.Current.CustomColors = [rgba, rgb];
             LunaCapture.Services.AppSettings.Current.NumberSquare = true;
@@ -328,6 +334,9 @@ unsafe
             LunaCapture.Services.AppSettings.Current.NumberFontSize = 28;
             LunaCapture.Services.AppSettings.Save();
             LunaCapture.Services.AppSettings.Load();
+            if (LunaCapture.Capture.CaptureFileName.Create(null, captureTime, "png") != "20261113_143052_123_Luna.png")
+                throw new Exception("파일 이름 설정 복원 또는 전체 화면 이름 오류");
+            log.AppendLine("저장 파일 이름 3종 · 설정 복원 · 전체 화면 기본 이름 통과");
             if (!LunaCapture.Services.AppSettings.Current.NumberOutside || LunaCapture.Services.AppSettings.Current.NumberSize != 2) throw new Exception("번호 기본 위치·크기 설정 저장 실패");
             if (LunaCapture.Services.AppSettings.Current.NumberCorner != 3 || LunaCapture.Services.AppSettings.Current.NumberFontSize != 28) throw new Exception("번호 폰트·모서리 설정 저장 실패");
             if (LunaCapture.Services.AppSettings.Current.NumberQuadrant != 1) throw new Exception("사분면 설정 저장 실패");
