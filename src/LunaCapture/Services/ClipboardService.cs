@@ -5,12 +5,17 @@ namespace LunaCapture.Services;
 
 internal static unsafe class ClipboardService
 {
+    internal const int MaxObjectBytes = 64 * 1024 * 1024;
+    static readonly uint ObjectFormat = User32.RegisterClipboardFormatW("LunaCapture.EditableObjects.v1");
+    public static bool HasObjects => ObjectFormat != 0 && User32.IsClipboardFormatAvailable(ObjectFormat) != 0;
     /// <summary>
     /// 파일 자체를 클립보드에 넣는다 (탐색기에서 Ctrl+C 한 것과 같음).
     /// 메신저·디스코드·슬랙 등에 Ctrl+V 하면 GIF 파일이 그대로 첨부된다.
     /// </summary>
-    public static bool SetFile(nint owner, string path)
+    public static bool SetFile(nint owner, string path, bool preserveObjects = false)
     {
+        byte[]? objects = preserveObjects ? GetObjects(owner) : null;
+        if (preserveObjects && HasObjects && objects == null) return false;
         // DROPFILES 헤더(20바이트) + 유니코드 경로 + 이중 널
         const int headerSize = 20;
         int bytes = headerSize + (path.Length + 2) * 2;
@@ -18,35 +23,91 @@ internal static unsafe class ClipboardService
         if (mem == 0) return false;
 
         byte* p = (byte*)Kernel32.GlobalLock(mem);
+        if (p == null) { Kernel32.GlobalFree(mem); return false; }
         *(uint*)p = headerSize;   // pFiles
         *(int*)(p + 16) = 1;      // fWide
         char* dst = (char*)(p + headerSize);
         for (int i = 0; i < path.Length; i++) dst[i] = path[i];
         Kernel32.GlobalUnlock(mem);
 
-        return SetData(owner, Win.CF_HDROP, mem);
+        return SetData(owner, Win.CF_HDROP, mem, objects);
     }
 
-    static bool SetData(nint owner, uint format, nint mem)
+    static bool SetData(nint owner, uint format, nint mem, byte[]? objects = null)
     {
+        nint objectMemory = 0;
+        if (objects != null)
+        {
+            if (ObjectFormat == 0 || objects.Length > MaxObjectBytes) { Kernel32.GlobalFree(mem); return false; }
+            objectMemory = Kernel32.GlobalAlloc(Win.GMEM_MOVEABLE, (nuint)(objects.Length + 4));
+            if (objectMemory == 0) { Kernel32.GlobalFree(mem); return false; }
+            byte* destination = (byte*)Kernel32.GlobalLock(objectMemory);
+            if (destination == null) { Kernel32.GlobalFree(mem); Kernel32.GlobalFree(objectMemory); return false; }
+            *(int*)destination = objects.Length;
+            objects.CopyTo(new Span<byte>(destination + 4, objects.Length));
+            Kernel32.GlobalUnlock(objectMemory);
+        }
         for (int i = 0; i < 10; i++)
         {
             if (User32.OpenClipboard(owner) != 0)
             {
-                User32.EmptyClipboard();
+                if (User32.EmptyClipboard() == 0)
+                {
+                    User32.CloseClipboard();
+                    Kernel32.GlobalFree(mem);
+                    if (objectMemory != 0) Kernel32.GlobalFree(objectMemory);
+                    return false;
+                }
                 bool ok = User32.SetClipboardData(format, mem) != 0;
+                bool objectOk = objectMemory == 0 || User32.SetClipboardData(ObjectFormat, objectMemory) != 0;
                 User32.CloseClipboard();
                 if (!ok) Kernel32.GlobalFree(mem);
-                return ok;
+                if (!objectOk) Kernel32.GlobalFree(objectMemory);
+                return ok && objectOk;
             }
             Thread.Sleep(20);
         }
         Kernel32.GlobalFree(mem);
+        if (objectMemory != 0) Kernel32.GlobalFree(objectMemory);
         return false;
     }
 
+    public static byte[]? GetObjects(nint owner)
+    {
+        if (!HasObjects) return null;
+        bool opened = false;
+        for (int i = 0; i < 10; i++)
+        {
+            if (User32.OpenClipboard(owner) != 0) { opened = true; break; }
+            Thread.Sleep(20);
+        }
+        if (!opened) return null;
+        try
+        {
+            nint memory = User32.GetClipboardData(ObjectFormat);
+            if (memory == 0 || Kernel32.GlobalSize(memory) < 4) return null;
+            byte* data = (byte*)Kernel32.GlobalLock(memory);
+            if (data == null) return null;
+            try
+            {
+                int length = *(int*)data;
+                if (length <= 0 || length > MaxObjectBytes || (ulong)length + 4 > (ulong)Kernel32.GlobalSize(memory)) return null;
+                return new ReadOnlySpan<byte>(data + 4, length).ToArray();
+            }
+            finally { Kernel32.GlobalUnlock(memory); }
+        }
+        finally { User32.CloseClipboard(); }
+    }
+
     /// <summary>이미지를 CF_DIB(32bpp, bottom-up)로 클립보드에 넣는다.</summary>
-    public static bool SetImage(nint owner, PixelImage img)
+    public static bool SetImage(nint owner, PixelImage img, bool preserveObjects = false)
+    {
+        byte[]? objects = preserveObjects ? GetObjects(owner) : null;
+        if (preserveObjects && HasObjects && objects == null) return false;
+        return SetObjectImage(owner, img, objects);
+    }
+
+    public static bool SetObjectImage(nint owner, PixelImage img, byte[]? objects)
     {
         int headerSize = sizeof(BITMAPINFOHEADER);
         int pixelBytes = img.Stride * img.Height;
@@ -54,6 +115,7 @@ internal static unsafe class ClipboardService
         if (mem == 0) return false;
 
         byte* p = (byte*)Kernel32.GlobalLock(mem);
+        if (p == null) { Kernel32.GlobalFree(mem); return false; }
         *(BITMAPINFOHEADER*)p = new BITMAPINFOHEADER
         {
             biSize = (uint)headerSize,
@@ -72,7 +134,7 @@ internal static unsafe class ClipboardService
         Kernel32.GlobalUnlock(mem);
 
         // 다른 프로그램이 클립보드를 잡고 있을 수 있어 SetData가 몇 번 재시도한다.
-        return SetData(owner, Win.CF_DIB, mem);
+        return SetData(owner, Win.CF_DIB, mem, objects);
     }
 
     /// <summary>클립보드의 그림을 읽는다 (24/32bpp DIB). 그림이 없거나 읽을 수 없으면 null.</summary>

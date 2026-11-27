@@ -71,13 +71,14 @@ internal sealed class Toolbar : IDisposable
             x += w + gap;
         }
 
+        Add(ItemKind.Tool, (int)Tool.Objects, btn, "객체 선택 (V) · 드래그로 여러 개 선택 · Shift+클릭 추가 · Ctrl+A 객체 전체");
         Add(ItemKind.Tool, (int)Tool.Rect, btn, "도형 (R) · 다시 누르면 옵션 열기/닫기 · 더블클릭하면 글자 넣기");
         Add(ItemKind.Tool, (int)Tool.Select, btn, "영역 선택 (E) · 복사·저장·오려내기·자르기·강조 · Ctrl+A 전체");
         Add(ItemKind.Tool, (int)Tool.Arrow, btn, "화살표 (A)");
         Add(ItemKind.Tool, (int)Tool.Pen, btn, "펜 (P)");
         Add(ItemKind.Tool, (int)Tool.Highlighter, btn, "형광펜 (H)");
         Add(ItemKind.Tool, (int)Tool.Text, btn, "텍스트 (T)");
-        Add(ItemKind.Tool, (int)Tool.Bubble, btn, "말풍선 (B) · 다시 누르면 옵션 열기/닫기");
+        Add(ItemKind.Tool, (int)Tool.Bubble, btn, "말풍선 (B) · 클릭한 곳에 입력 · 선택 후 꼬리 시작·끝·폭 조절");
         Add(ItemKind.Tool, (int)Tool.Number, btn, "번호 (N) · 다시 누르면 옵션 열기/닫기 · Esc로 접기");
         Add(ItemKind.Tool, (int)Tool.Sticker, btn, "스티커 (S) · 다시 누르면 옵션 열기/닫기");
         Add(ItemKind.Tool, (int)Tool.Mosaic, btn, "모자이크 (M)");
@@ -102,7 +103,7 @@ internal sealed class Toolbar : IDisposable
         int rx = Math.Max(leftEnd + S(24), width - rightWidth);
         x = rx;
         Add(ItemKind.History, 0, tw, "캡처 기록 패널 열기/닫기");
-        Add(ItemKind.Copy, 0, tw, "클립보드에 복사 (Ctrl+C)");
+        Add(ItemKind.Copy, 0, tw, "선택 객체·영역 또는 이미지 복사 (Ctrl+C)");
         Add(ItemKind.SaveAs, 0, tw, "다른 이름으로 저장 (Ctrl+S)");
         Add(ItemKind.OpenFolder, 0, S(90), "캡처 사진 저장 폴더 열기");
         Add(ItemKind.Settings, 0, tw, "설정 · 업데이트 · 이거 고쳐주세요!");
@@ -231,6 +232,12 @@ internal sealed class Toolbar : IDisposable
     {
         switch (tool)
         {
+            case Tool.Objects:
+                g.FillPolygon(fg, [new(cx - r * 0.65f, cy - r), new(cx - r * 0.65f, cy + r),
+                    new(cx - r * 0.05f, cy + r * 0.4f), new(cx + r * 0.45f, cy + r * 1.1f),
+                    new(cx + r * 0.85f, cy + r * 0.8f), new(cx + r * 0.35f, cy + r * 0.1f),
+                    new(cx + r, cy - r * 0.05f)]);
+                break;
             case Tool.Select:
             {
                 // 점선 사각형 (영역 선택)

@@ -25,7 +25,7 @@ internal sealed unsafe class HistoryWindow : NativeWindow
     float _s = 1f;
     int _cw, _ch;
     int _scroll, _contentH;
-    int _selected = -1, _hover = -1;
+    int _selected = -1, _hover = -1, _deleteHover = -1;
     long _lastClickTick;
     int _lastClickIndex = -1;
     string _status = "";
@@ -77,6 +77,7 @@ internal sealed unsafe class HistoryWindow : NativeWindow
         foreach (var t in _thumbs.Values) t.Dispose();
         _thumbs.Clear();
         _entries = HistoryStore.LoadAll();
+        _hover = _deleteHover = -1;
         foreach (var e in _entries)
         {
             var img = GdiPlus.LoadImage(HistoryStore.Thumb(e.Id));
@@ -110,7 +111,8 @@ internal sealed unsafe class HistoryWindow : NativeWindow
             case Win.WM_MOUSEMOVE:
             {
                 int h = HitCell(Win.LoWord(lParam), Win.HiWord(lParam));
-                if (h != _hover) { _hover = h; Invalidate(); }
+                int d = h >= 0 && HistoryDeleteButton.Contains(CellRect(h), _s, Win.LoWord(lParam), Win.HiWord(lParam)) ? h : -1;
+                if (h != _hover || d != _deleteHover) { _hover = h; _deleteHover = d; Invalidate(); }
                 return 0;
             }
             case Win.WM_LBUTTONDOWN:
@@ -144,6 +146,13 @@ internal sealed unsafe class HistoryWindow : NativeWindow
     {
         int i = HitCell(x, y);
         if (i < 0) return;
+        if (HistoryDeleteButton.Contains(CellRect(i), _s, x, y))
+        {
+            _selected = i;
+            _lastClickIndex = -1;
+            DeleteSelected();
+            return;
+        }
         long now = Environment.TickCount64;
         bool dbl = i == _lastClickIndex && now - _lastClickTick <= User32.GetDoubleClickTime();
         _lastClickTick = now;
@@ -200,7 +209,7 @@ internal sealed unsafe class HistoryWindow : NativeWindow
     void DeleteSelected()
     {
         if (Selected is not { } e) return;
-        HistoryStore.Delete(e.Id);
+        if (!HistoryDeleteButton.Delete(Handle, e)) return;
         int keep = _selected;
         Reload();
         _selected = Math.Min(keep, _entries.Count - 1);
@@ -329,6 +338,7 @@ internal sealed unsafe class HistoryWindow : NativeWindow
                 g.Text(When(e.Created), _body!, TextMain, r.Left + Px(12), ty);
                 string info = $"{e.Width}×{e.Height}" + (e.Kind == "image" && e.Items.Count > 0 ? $" · 편집 {e.Items.Count}개" : "");
                 g.Text(info, _small!, TextSub, r.Left + Px(12), ty + Px(22));
+                HistoryDeleteButton.Draw(g, r, _s, i == _deleteHover);
 
                 if (e.Kind != "image")
                 {

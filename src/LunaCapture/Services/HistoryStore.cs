@@ -117,10 +117,11 @@ internal static class HistoryStore
         e.Items.Select(AnnotationJson.FromDto).Where(a => a != null).Select(a => a!).ToList();
 
     /// <summary>기록에서만 지운다 (사진·GIF·동영상 저장 파일은 그대로).</summary>
-    public static void Delete(string id)
+    public static bool Delete(string id)
     {
         foreach (var f in new[] { Json(id), Orig(id), Thumb(id) })
             try { if (File.Exists(f)) File.Delete(f); } catch (Exception ex) { Log.Error(ex); }
+        return !File.Exists(Json(id)) && !File.Exists(Orig(id)) && !File.Exists(Thumb(id));
     }
 
     /// <summary>최대 개수를 넘는 오래된 기록을 지운다. (설정에서 개수를 줄였을 때도 호출)</summary>

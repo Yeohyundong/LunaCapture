@@ -171,6 +171,9 @@ unsafe
         UiFonts.LoadEmbedded();
         LunaCapture.Services.AppSettings.Load();
         var log = new System.Text.StringBuilder();
+        string bubbleTestDirectory = Path.GetDirectoryName(Path.GetFullPath(args[1]))!;
+        LunaCapture.Editor.BubbleSelfTest.Run(bubbleTestDirectory);
+        log.AppendLine("말풍선 클릭 위치 · 꼬리 시작/끝/폭 독립 조절 · 이전 기록 호환 통과");
         var orig = new LunaCapture.Graphics.PixelImage(640, 400);
         for (int i = 0; i < orig.Bgra.Length; i += 4) { orig.Bgra[i] = (byte)(i / 4 % 640 * 255 / 640); orig.Bgra[i + 1] = 180; orig.Bgra[i + 2] = 90; orig.Bgra[i + 3] = 255; }
         var piece = new LunaCapture.Graphics.PixelImage(30, 20); // 반투명 그라데이션 조각 (붙여넣기 그림 시험)
@@ -183,6 +186,7 @@ unsafe
             new LunaCapture.Editor.PenAnnotation { Color = 0x70FFC53D, Width = 22, Highlighter = true, Points = [new(40, 200), new(300, 200)] },
             new LunaCapture.Editor.TextAnnotation { Color = 0xFFFFFFFF, Position = new(480, 40), Text = "텍스트", FontSize = 24 },
             new LunaCapture.Editor.BubbleAnnotation { Color = 0xFF8B7CF6, Tail = new(500, 330), Dir = LunaCapture.Editor.TailDir.BottomRight, Text = "말풍선", FontSize = 20 },
+            new LunaCapture.Editor.BubbleAnnotation { Color = 0xFF30A46C, BodyPosition = new(20, 220), TailTip = new(15, 320), TailSide = LunaCapture.Editor.TailDir.Left, TailPosition = 0.5f, TailWidth = 8, Text = "자유 꼬리", FontSize = 18 },
             new LunaCapture.Editor.StickerAnnotation { Kind = LunaCapture.Editor.StickerKind.Star, Center = new(560, 200), Size = 52 },
             new LunaCapture.Editor.NumberAnnotation { Number = 3, Color = 0xFFF76B15, Center = new(380, 250), Size = 34, Square = true, Glow = true, HasBox = true, End = new(450, 290), Width = 3 },
             new LunaCapture.Editor.MosaicAnnotation { A = new(250, 300), B = new(360, 380), BlockSize = 12 },
@@ -195,8 +199,26 @@ unsafe
             foreach (var fill in Enum.GetValues<LunaCapture.Editor.FillStyle>())
                 items.Add(new LunaCapture.Editor.RectAnnotation { A = new(30 + (int)fill * 65, 40 + (int)shape * 65), B = new(85 + (int)fill * 65, 90 + (int)shape * 65), Shape = shape, Fill = fill, Color = 0x9F0090FF, Width = 3 });
         var expected = LunaCapture.Editor.Composer.Compose(orig, items);
+        LunaCapture.Editor.ObjectTransferSelfTest.Run(orig, items);
+        LunaCapture.Editor.ObjectScaleSelfTest.Run(orig, items);
+        log.AppendLine("멀티 선택 4개 모서리 · 글자·선·번호·말풍선 확대 · 복사·저장 모양 유지 통과");
+        log.AppendLine("객체 복사 · 개별 편집 · 겹침 순서 · 반복 붙여넣기 · 상대 위치·크기 유지 통과");
 
         LunaCapture.Services.AppSettings.Current.HistoryMax = 3;
+        string deletionFile = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[1]))!, "delete-test-saved.png");
+        LunaCapture.Graphics.PngEncoder.Save(orig, deletionFile);
+        byte[] savedFileBytes = File.ReadAllBytes(deletionFile);
+        string deletionId = LunaCapture.Services.HistoryStore.AddImage(orig, deletionFile)!;
+        if (!LunaCapture.Services.HistoryStore.Delete(deletionId) ||
+            LunaCapture.Services.HistoryStore.LoadAll().Any(e => e.Id == deletionId) ||
+            LunaCapture.Services.HistoryStore.LoadOriginal(deletionId) != null ||
+            File.Exists(LunaCapture.Services.HistoryStore.Thumb(deletionId)) ||
+            !File.ReadAllBytes(deletionFile).SequenceEqual(savedFileBytes))
+            throw new Exception("캡처 기록 삭제 범위 검증 실패");
+        LunaCapture.Services.HistoryStore.UpdateImage(deletionId, expected, items, deletionFile, orig);
+        if (LunaCapture.Services.HistoryStore.LoadAll().Any(e => e.Id == deletionId))
+            throw new Exception("삭제된 기록이 편집 저장으로 복구됨");
+        log.AppendLine("캡처 기록 원본·편집·미리보기 삭제 · 저장 파일 유지 · 삭제 후 편집 시 기록 재생성 방지 통과");
         string? id = LunaCapture.Services.HistoryStore.AddImage(orig, "C:\\nowhere\\a.png");
         LunaCapture.Services.HistoryStore.UpdateImage(id!, expected, items, null);
         var entry = LunaCapture.Services.HistoryStore.LoadAll().First(e => e.Id == id);

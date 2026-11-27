@@ -238,25 +238,25 @@ internal static class Stickers
 
     public static uint WithOpacity(uint color, float opacity) => (color & 0xFFFFFF) | (uint)MathF.Round((color >> 24) * opacity) << 24;
 
-    public static void NumberOutlineGlow(Gfx g, RectF box, float width, uint color)
+    public static void NumberOutlineGlow(Gfx g, RectF box, float width, uint color, float detailScale = 1)
     {
         // Several low-opacity strokes form a soft edge without obscuring the captured content.
-        float spread = Math.Clamp(width, 2f, 4f);
+        float spread = Math.Clamp(width, 2f * detailScale, 4f * detailScale);
         for (int i = 3; i >= 1; i--)
         {
             uint shadow = WithOpacity((color & 0xFF000000), 0.10f * (4 - i));
             g.Rect(shadow, width + spread * i * 2, box.X, box.Y + spread * 0.6f, box.Width, box.Height);
             g.Rect(WithOpacity(Mix(color, 0xFFFFFFFF, 0.6f), 0.10f * (4 - i)), width + spread * i, box.X, box.Y, box.Width, box.Height);
         }
-        g.Rect(WithOpacity(color, 0.9f), width + 3, box.X, box.Y, box.Width, box.Height);
-        g.Rect(WithOpacity(0xFF000000, (color >> 24) / 255f * 0.6f), width + 1.5f, box.X, box.Y, box.Width, box.Height);
+        g.Rect(WithOpacity(color, 0.9f), width + 3 * detailScale, box.X, box.Y, box.Width, box.Height);
+        g.Rect(WithOpacity(0xFF000000, (color >> 24) / 255f * 0.6f), width + 1.5f * detailScale, box.X, box.Y, box.Width, box.Height);
     }
 
-    public static void Number(Gfx g, int number, float cx, float cy, float size, uint color, bool square = false, bool glow = false, float fontSize = 0)
+    public static void Number(Gfx g, int number, float cx, float cy, float size, uint color, bool square = false, bool glow = false, float fontSize = 0, float detailScale = 1)
     {
         var box = new RectF(cx - size / 2, cy - size / 2, size, size);
-        if (glow && square) NumberOutlineGlow(g, box, MathF.Max(1, size * 0.06f), color);
-        if (glow && square) g.FillRect(WithOpacity((color & 0xFF000000) | 0xFFFFFF, 0.95f), box.X - 1.5f, box.Y - 1.5f, box.Width + 3, box.Height + 3);
+        if (glow && square) NumberOutlineGlow(g, box, MathF.Max(detailScale, size * 0.06f), color, detailScale);
+        if (glow && square) g.FillRect(WithOpacity((color & 0xFF000000) | 0xFFFFFF, 0.95f), box.X - 1.5f * detailScale, box.Y - 1.5f * detailScale, box.Width + 3 * detailScale, box.Height + 3 * detailScale);
         if (square) g.FillRect(color, cx - size / 2, cy - size / 2, size, size);
         else g.FillEllipse(color, cx - size / 2, cy - size / 2, size, size);
         string text = number.ToString();
@@ -270,10 +270,10 @@ internal static class Stickers
     /// (도형 두 개를 겹치면 테두리를 그릴 때 몸통과 꼬리 사이에 이음매 선이 보인다)
     /// 몸통 둘레를 시계 방향으로 돌다가, 꼬리가 붙는 변에서 꼬리 끝(tip)을 찍고 돌아온다.
     /// </summary>
-    public static nint BubblePath(RectF body, PointF tip, float radius, TailDir dir)
+    public static (PointF A, PointF B) BubbleBase(RectF body, float radius, TailDir dir, float? position = null, float? width = null, float detailScale = 1)
     {
         float x = body.X, y = body.Y, w = body.Width, h = body.Height;
-        float r = MathF.Min(radius, MathF.Min(w, h) / 2), d = r * 2;
+        float r = MathF.Min(radius, MathF.Min(w, h) / 2);
         bool horizontal = dir is TailDir.Left or TailDir.Right;
         float baseW = horizontal ? MathF.Min(h * 0.45f, r * 1.4f) : MathF.Min(w * 0.35f, r * 1.6f);
 
@@ -288,6 +288,36 @@ internal static class Stickers
             default: // 좌우: 세로 가운데
                 b0 = y + (h - baseW) / 2; b1 = b0 + baseW; break;
         }
+        if (position.HasValue || width.HasValue)
+        {
+            float length = horizontal ? h : w;
+            float origin = horizontal ? y : x;
+            float span = MathF.Max(0, length - r * 2);
+            baseW = Math.Clamp(width ?? baseW, MathF.Min(2 * detailScale, span), span);
+            float ratio = position ?? (dir is TailDir.BottomRight or TailDir.TopRight ? 0.78f :
+                horizontal ? 0.5f : 0.22f);
+            float minimum = origin + r + baseW / 2;
+            float maximum = MathF.Max(minimum, origin + length - r - baseW / 2);
+            float center = Math.Clamp(origin + length * ratio, minimum, maximum);
+            b0 = center - baseW / 2;
+            b1 = center + baseW / 2;
+        }
+        if (horizontal)
+        {
+            float sideX = dir == TailDir.Left ? x : x + w;
+            return (new(sideX, b0), new(sideX, b1));
+        }
+        float sideY = dir is TailDir.TopLeft or TailDir.TopRight ? y : y + h;
+        return (new(b0, sideY), new(b1, sideY));
+    }
+
+    public static nint BubblePath(RectF body, PointF tip, float radius, TailDir dir, float? position = null, float? width = null, float detailScale = 1)
+    {
+        float x = body.X, y = body.Y, w = body.Width, h = body.Height;
+        float r = MathF.Min(radius, MathF.Min(w, h) / 2), d = r * 2;
+        var (a, b) = BubbleBase(body, radius, dir, position, width, detailScale);
+        bool horizontal = dir is TailDir.Left or TailDir.Right;
+        float b0 = horizontal ? a.Y : a.X, b1 = horizontal ? b.Y : b.X;
         bool top = dir is TailDir.TopLeft or TailDir.TopRight;
         bool bottom = dir is TailDir.BottomLeft or TailDir.BottomRight;
 
@@ -306,23 +336,23 @@ internal static class Stickers
 
     static void Line(nint path, float x1, float y1, float x2, float y2) => GdiPlus.GdipAddPathLine(path, x1, y1, x2, y2);
 
-    public static void Bubble(Gfx g, RectF body, PointF tip, float radius, uint color, TailDir dir)
+    public static void Bubble(Gfx g, RectF body, PointF tip, float radius, uint color, TailDir dir, float? position = null, float? width = null, float detailScale = 1)
     {
         foreach (var (dy, alpha) in new[] { (radius * 0.45f, 0x1Cu), (radius * 0.22f, 0x2Au) })
         {
-            nint sh = BubblePath(new RectF(body.X, body.Y + dy, body.Width, body.Height), new PointF(tip.X, tip.Y + dy), radius, dir);
+            nint sh = BubblePath(new RectF(body.X, body.Y + dy, body.Width, body.Height), new PointF(tip.X, tip.Y + dy), radius, dir, position, width, detailScale);
             g.FillPath(sh, alpha << 24);
             Gfx.DeletePath(sh);
         }
-        nint p = BubblePath(body, tip, radius, dir);
+        nint p = BubblePath(body, tip, radius, dir, position, width, detailScale);
         g.FillPathGradient(p, Mix(color, White, 0.12f), color, body.Y, body.Y + body.Height);
-        if (ContrastText(color) != White) g.DrawPath(p, 0x26000000, 1); // 흰·노랑 풍선은 이어진 테두리를 아주 옅게
+        if (ContrastText(color) != White) g.DrawPath(p, 0x26000000, detailScale); // 흰·노랑 풍선은 이어진 테두리를 아주 옅게
         Gfx.DeletePath(p);
     }
 
     /// <summary>
     /// 몸통 기준으로 꼬리 끝 위치 (선택 줄의 작은 미리보기용).
-    /// 실제 말풍선은 반대로 "클릭한 곳 = 꼬리 끝"에 맞춰 몸통을 놓는다 (BubbleAnnotation).
+    /// 새 말풍선의 기본 꼬리 위치와 선택 줄의 미리보기에 사용한다.
     /// </summary>
     public static PointF TipFor(RectF body, TailDir dir, float len) => dir switch
     {

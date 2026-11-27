@@ -18,7 +18,7 @@ internal sealed unsafe class HistoryPanel : IDisposable
     readonly List<RECT> _cells = new();   // 스크롤 전 좌표
     RECT _area;
     float _s = 1f;
-    int _scroll, _contentH, _hover = -1;
+    int _scroll, _contentH, _hover = -1, _deleteHover = -1;
     GdiFont? _title, _small, _badge;
 
     public string? CurrentId;
@@ -41,6 +41,7 @@ internal sealed unsafe class HistoryPanel : IDisposable
         foreach (var t in _thumbs.Values) t.Dispose();
         _thumbs.Clear();
         _entries = HistoryStore.LoadAll();
+        _hover = _deleteHover = -1;
         foreach (var e in _entries) LoadThumb(e.Id);
         Relayout();
     }
@@ -118,12 +119,20 @@ internal sealed unsafe class HistoryPanel : IDisposable
 
     public HistoryEntry? EntryAt(int index) => index >= 0 && index < _entries.Count ? _entries[index] : null;
 
+    public int HitDelete(int x, int y)
+    {
+        int i = Hit(x, y);
+        return i >= 0 && HistoryDeleteButton.Contains(ScreenCell(i), _s, x, y) ? i : -1;
+    }
+
     /// <returns>호버 항목이 바뀌었는지 (다시 그려야 하는지)</returns>
     public bool SetHover(int x, int y)
     {
         int h = Hit(x, y);
-        if (h == _hover) return false;
+        int d = HitDelete(x, y);
+        if (h == _hover && d == _deleteHover) return false;
         _hover = h;
+        _deleteHover = d;
         return true;
     }
 
@@ -171,18 +180,21 @@ internal sealed unsafe class HistoryPanel : IDisposable
                 if (current) g.RoundRect(Accent, Px(2), r.Left - Px(4), r.Top - Px(4), r.Width + Px(8), r.Height + Px(4), Px(8));
 
                 float ty = r.Bottom - Px(22);
+                var deleteButton = HistoryDeleteButton.Bounds(r, _s);
+                float infoRight = deleteButton.Left - Px(4);
+                HistoryDeleteButton.Draw(g, r, _s, i == _deleteHover);
                 g.Text(When(e.Created), _small!, current ? TextMain : TextSub, r.Left, ty);
                 if (e.Kind != "image")
                 {
                     string badge = e.Kind == "gif" ? "GIF" : "MP4";
                     float bw = g.MeasureWidth(badge, _badge!) + Px(10), bh = Px(16);
-                    g.FillRoundRect(e.Kind == "gif" ? 0xFFE5484D : 0xFF0090FF, r.Right - bw, ty, bw, bh, Px(4));
-                    g.CenterText(badge, _badge!, 0xFFFFFFFF, r.Right - bw, ty, bw, bh);
+                    g.FillRoundRect(e.Kind == "gif" ? 0xFFE5484D : 0xFF0090FF, infoRight - bw, ty, bw, bh, Px(4));
+                    g.CenterText(badge, _badge!, 0xFFFFFFFF, infoRight - bw, ty, bw, bh);
                 }
                 else if (e.Items.Count > 0)
                 {
                     string n = $"편집 {e.Items.Count}";
-                    g.Text(n, _small!, TextSub, r.Right - g.MeasureWidth(n, _small!), ty);
+                    g.Text(n, _small!, TextSub, infoRight - g.MeasureWidth(n, _small!), ty);
                 }
             }
         }

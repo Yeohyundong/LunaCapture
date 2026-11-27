@@ -68,14 +68,14 @@ internal sealed unsafe partial class EditorWindow
             return;
         }
 
-        _selected = null;
+        ClearSelection();
         _marquee = null;
         _mqAnchor = Snap(p);
         BeginDrag(DragMode.Marquee, p);
         Invalidate();
     }
 
-    static bool SelectToolPicks(Annotation a) => a is ImageAnnotation or SpotlightAnnotation or NumberAnnotation;
+    static bool SelectToolPicks(Annotation a) => a is ImageAnnotation or SpotlightAnnotation or NumberAnnotation or BubbleAnnotation;
 
     void DragMarquee(PointF p)
     {
@@ -151,11 +151,14 @@ internal sealed unsafe partial class EditorWindow
         User32.AppendMenuW(menu, Win.MF_SEPARATOR, 0, null);
         User32.AppendMenuW(menu, Win.MF_STRING, 4, "자르기 (이 영역만 남기기)");
         User32.AppendMenuW(menu, Win.MF_STRING, 5, "강조 (나머지 어둡게)");
+        User32.AppendMenuW(menu, Win.MF_SEPARATOR, 0, null);
+        User32.AppendMenuW(menu, Win.MF_STRING, 6, "추가한 객체 모두 선택");
         POINT pt = new() { X = x, Y = y };
         User32.ClientToScreen(Handle, &pt);
         int cmd = User32.TrackPopupMenu(menu, Win.TPM_RIGHTBUTTON | Win.TPM_RETURNCMD | Win.TPM_NONOTIFY, pt.X, pt.Y, 0, Handle, 0);
         User32.DestroyMenu(menu);
-        if (cmd > 0) RunBarAction(cmd - 1);
+        if (cmd == 6) SelectAllObjects();
+        else if (cmd > 0) RunBarAction(cmd - 1);
     }
 
     /// <summary>빈 곳을 오른쪽 클릭: 붙여넣기 · 전체 선택.</summary>
@@ -163,14 +166,16 @@ internal sealed unsafe partial class EditorWindow
     {
         bool hasImage = User32.IsClipboardFormatAvailable(Win.CF_DIB) != 0 || User32.IsClipboardFormatAvailable(17 /* CF_DIBV5 */) != 0;
         nint menu = User32.CreatePopupMenu();
-        User32.AppendMenuW(menu, Win.MF_STRING | (hasImage ? 0u : 0x1u /* MF_GRAYED */), 1, "붙여넣기\tCtrl+V");
-        User32.AppendMenuW(menu, Win.MF_STRING, 2, "전체 선택\tCtrl+A");
+        User32.AppendMenuW(menu, Win.MF_STRING | (hasImage || ClipboardService.HasObjects ? 0u : 0x1u /* MF_GRAYED */), 1, "붙여넣기\tCtrl+V");
+        User32.AppendMenuW(menu, Win.MF_STRING, 2, "이미지 전체 영역 선택\tCtrl+A");
+        User32.AppendMenuW(menu, Win.MF_STRING, 3, "추가한 객체 모두 선택");
         POINT pt = new() { X = x, Y = y };
         User32.ClientToScreen(Handle, &pt);
         int cmd = User32.TrackPopupMenu(menu, Win.TPM_RIGHTBUTTON | Win.TPM_RETURNCMD | Win.TPM_NONOTIFY, pt.X, pt.Y, 0, Handle, 0);
         User32.DestroyMenu(menu);
         if (cmd == 1) Paste();
         else if (cmd == 2) SelectAll();
+        else if (cmd == 3) SelectAllObjects();
     }
 
     // ───────────────────────── 동작 ─────────────────────────
@@ -233,7 +238,7 @@ internal sealed unsafe partial class EditorWindow
         var cropped = Composer.Crop(_base, r);
         foreach (var a in _items) a.Offset(-r.Left, -r.Top);
         _marquee = null;
-        _selected = null;
+        ClearSelection();
         SetBase(cropped);
         ShowStatus($"{r.Width}×{r.Height}로 잘랐어요 · Ctrl+Z로 되돌릴 수 있어요");
     }
@@ -253,6 +258,7 @@ internal sealed unsafe partial class EditorWindow
     /// <summary>클립보드의 그림을 붙인다: 영역이 있으면 그 자리, 없으면 가운데. 너무 크면 맞게 줄인다.</summary>
     void Paste()
     {
+        if (TryPasteObjects()) return;
         var img = ClipboardService.GetImage(Handle);
         if (img == null) { ShowStatus("클립보드에 그림이 없어요"); return; }
         CommitText();

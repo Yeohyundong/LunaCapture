@@ -12,6 +12,7 @@ internal sealed class AnnotationDto
     public string Type { get; set; } = "";
     public uint Color { get; set; }
     public float Width { get; set; }
+    public float DetailScale { get; set; } = 1;
     /// <summary>좌표들 [x0, y0, x1, y1, …] (이미지 픽셀)</summary>
     public float[] Pts { get; set; } = [];
     public string? Text { get; set; }
@@ -26,6 +27,11 @@ internal sealed class AnnotationDto
     public int? Quadrant { get; set; }
     public float? BadgeX { get; set; }
     public float? BadgeY { get; set; }
+    public float[]? BubbleBody { get; set; }
+    public float[]? BubbleTip { get; set; }
+    public int? TailSide { get; set; }
+    public float? TailPosition { get; set; }
+    public float? TailWidth { get; set; }
     public float Size { get; set; }
     public int BlockSize { get; set; }
     public bool Highlighter { get; set; }
@@ -45,12 +51,23 @@ internal static class AnnotationJson
     }
 
     static PointF Pt(float[] a, int i) => a.Length >= i * 2 + 2 ? new PointF(a[i * 2], a[i * 2 + 1]) : default;
+    static PointF? OptionalPoint(float[]? points) =>
+        points is { Length: 2 } && float.IsFinite(points[0]) && float.IsFinite(points[1])
+            ? new PointF(points[0], points[1]) : null;
 
-    public static AnnotationDto ToDto(Annotation a) => a switch
+    public static AnnotationDto ToDto(Annotation a)
+    {
+        AnnotationDto dto = a switch
     {
         ArrowAnnotation x => new() { Type = "arrow", Color = x.Color, Width = x.Width, Pts = P(x.From, x.To) },
         RectAnnotation x => new() { Type = "shape", Color = x.Color, Width = x.Width, Pts = P(x.A, x.B), Kind = (int)x.Shape, Fill = (int)x.Fill, Text = x.Text, FontSize = x.FontSize },
-        BubbleAnnotation x => new() { Type = "bubble", Color = x.Color, Pts = P(x.Tail), Kind = (int)x.Dir, Text = x.Text, FontSize = x.FontSize },
+        BubbleAnnotation x => new()
+        {
+            Type = "bubble", Color = x.Color, Pts = P(x.Tail), Kind = (int)x.Dir, Text = x.Text, FontSize = x.FontSize,
+            BubbleBody = x.BodyPosition is { } body ? P(body) : null,
+            BubbleTip = x.TailTip is { } tip ? P(tip) : null,
+            TailSide = (int?)x.TailSide, TailPosition = x.TailPosition, TailWidth = x.TailWidth,
+        },
         TextAnnotation x => new() { Type = "text", Color = x.Color, Pts = P(x.Position), Text = x.Text, FontSize = x.FontSize },
         PenAnnotation x => new() { Type = "pen", Color = x.Color, Width = x.Width, Pts = P([.. x.Points]), Highlighter = x.Highlighter },
         StickerAnnotation x => new() { Type = "sticker", Pts = P(x.Center), Kind = (int)x.Kind, Size = x.Size },
@@ -60,7 +77,10 @@ internal static class AnnotationJson
         PatchAnnotation x => new() { Type = "patch", Color = x.Color, Pts = P(x.A, x.B) },
         SpotlightAnnotation x => new() { Type = "spotlight", Pts = P(x.A, x.B) },
         _ => new() { Type = "unknown" },
-    };
+        };
+        dto.DetailScale = a.DetailScale;
+        return dto;
+    }
 
     static string Pack(byte[] bgra)
     {
@@ -80,6 +100,14 @@ internal static class AnnotationJson
 
     public static Annotation? FromDto(AnnotationDto d)
     {
+        var annotation = ReadDto(d);
+        if (annotation != null)
+            annotation.DetailScale = float.IsFinite(d.DetailScale) && d.DetailScale > 0 ? d.DetailScale : 1;
+        return annotation;
+    }
+
+    static Annotation? ReadDto(AnnotationDto d)
+    {
         switch (d.Type)
         {
             case "arrow": return new ArrowAnnotation { Color = d.Color, Width = d.Width, From = Pt(d.Pts, 0), To = Pt(d.Pts, 1) };
@@ -89,7 +117,14 @@ internal static class AnnotationJson
                     Color = d.Color, Width = d.Width, A = Pt(d.Pts, 0), B = Pt(d.Pts, 1),
                     Shape = (ShapeKind)d.Kind, Fill = (FillStyle)d.Fill, Text = d.Text ?? "", FontSize = d.FontSize,
                 };
-            case "bubble": return new BubbleAnnotation { Color = d.Color, Tail = Pt(d.Pts, 0), Dir = (TailDir)d.Kind, Text = d.Text ?? "", FontSize = d.FontSize };
+            case "bubble": return new BubbleAnnotation
+            {
+                Color = d.Color, Tail = Pt(d.Pts, 0), Dir = (TailDir)d.Kind, Text = d.Text ?? "", FontSize = d.FontSize,
+                BodyPosition = OptionalPoint(d.BubbleBody), TailTip = OptionalPoint(d.BubbleTip),
+                TailSide = d.TailSide is >= 0 and < 6 ? (TailDir)d.TailSide.Value : null,
+                TailPosition = d.TailPosition is { } ratio && float.IsFinite(ratio) ? Math.Clamp(ratio, 0, 1) : null,
+                TailWidth = d.TailWidth is { } width && float.IsFinite(width) ? MathF.Max(0, width) : null,
+            };
             case "text": return new TextAnnotation { Color = d.Color, Position = Pt(d.Pts, 0), Text = d.Text ?? "", FontSize = d.FontSize };
             case "pen":
             {

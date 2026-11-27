@@ -3,13 +3,14 @@ using LunaCapture.Interop;
 
 namespace LunaCapture.Editor;
 
-internal enum Tool { Arrow, Rect, Pen, Highlighter, Text, Mosaic, Bubble, Number, Sticker, Select }
+internal enum Tool { Arrow, Rect, Pen, Highlighter, Text, Mosaic, Bubble, Number, Sticker, Select, Objects }
 
 /// <summary>이미지 좌표계(실제 픽셀)에 그려지는 주석 하나.</summary>
 internal abstract class Annotation
 {
     public uint Color;   // ARGB
     public float Width;  // 선 굵기 (이미지 픽셀)
+    public float DetailScale = 1; // 둥근 모서리·간격·강조 테두리 등 고정 크기의 확대 비율
 
     public abstract void Draw(GdiSurface target, Gfx g);
 
@@ -69,7 +70,7 @@ internal sealed class ArrowAnnotation : Annotation
         float ux = dx / len, uy = dy / len;
 
         // 머리 크기는 굵기에 비례하되, 짧은 화살표에서는 길이의 절반을 넘지 않게.
-        float head = MathF.Min(MathF.Max(Width * 4.2f, 12f), len * 0.5f);
+        float head = MathF.Min(MathF.Max(Width * 4.2f, 12f * DetailScale), len * 0.5f);
         float half = head * 0.48f;
         float bx = To.X - ux * head, by = To.Y - uy * head;
 
@@ -106,7 +107,7 @@ internal sealed class RectAnnotation : TextAnnotation
     public override bool IsMeaningful => MathF.Abs(A.X - B.X) > 3 && MathF.Abs(A.Y - B.Y) > 3;
 
     RectF Box => Geo.FromPoints(A, B);
-    float Radius => Shape == ShapeKind.RoundedRect ? MathF.Min(16, MathF.Min(Box.Width, Box.Height) * 0.2f) : 0;
+    float Radius => Shape == ShapeKind.RoundedRect ? MathF.Min(16 * DetailScale, MathF.Min(Box.Width, Box.Height) * 0.2f) : 0;
 
     // 채운 도형은 배경에 맞춰 글자색 자동, 테두리·반투명은 도형 색
     protected override uint TextColor => Fill == FillStyle.Solid ? Stickers.ContrastText(Color) : Color;
@@ -320,7 +321,7 @@ internal class TextAnnotation : Annotation
 }
 
 /// <summary>
-/// 말풍선: 클릭한 곳(Tail)을 꼬리가 가리키고, 풍선은 그 오른쪽 위에 글자 크기에 맞춰 늘어난다.
+/// 말풍선: 몸통 기준점과 꼬리를 독립적으로 배치한다. 이전 기록은 꼬리 기준 배치를 유지한다.
 /// 풍선 색 = 선택한 색, 글자 색은 잘 보이게 자동(밝은 풍선 → 진한 글자).
 /// </summary>
 internal sealed class BubbleAnnotation : TextAnnotation
@@ -328,12 +329,20 @@ internal sealed class BubbleAnnotation : TextAnnotation
     /// <summary>꼬리 끝 = 클릭한 곳. 꼬리 없음(None)이면 풍선의 왼쪽 위 기준점.</summary>
     public PointF Tail;
     public TailDir Dir = TailDir.BottomLeft;
+    public PointF? BodyPosition;
+    public PointF? TailTip;
+    public TailDir? TailSide;
+    public float? TailPosition;
+    public float? TailWidth;
+    public override bool IsMeaningful => BodyPosition.HasValue || base.IsMeaningful;
 
     (RectF body, float pad, float radius) Layout(Gfx g)
     {
         var (tw, th) = Measure(g);
         float pad = FontSize * 0.7f, radius = FontSize * 0.8f;
         float w = MathF.Max(tw, FontSize * 2.2f) + pad * 2, h = th + pad * 1.4f;
+        if (BodyPosition is { } bodyPosition)
+            return (new RectF(bodyPosition.X, bodyPosition.Y, w, h), pad, radius);
         float gap = FontSize * 1.3f;   // 꼬리 길이
         float edge = radius * 0.6f;    // 꼬리가 몸통 모서리에서 떨어진 정도
 
@@ -359,27 +368,114 @@ internal sealed class BubbleAnnotation : TextAnnotation
 
     protected override uint TextColor => Stickers.ContrastText(Color);
 
+    public RectF BodyBounds(Gfx g) => Layout(g).body;
+
+    TailDir EffectiveSide => TailSide ?? Dir;
+    PointF Tip(RectF body) => TailTip ?? (BodyPosition.HasValue ? Stickers.TipFor(body, Dir, FontSize * 1.3f) : Tail);
+
+    public (PointF Start, PointF End, PointF Width, PointF BaseA, PointF BaseB) TailHandles(Gfx g)
+    {
+        var (body, _, radius) = Layout(g);
+        var (a, b) = Stickers.BubbleBase(body, radius, EffectiveSide, TailPosition, TailWidth, DetailScale);
+        float gap = MathF.Max(10, FontSize * 0.6f);
+        var grip = EffectiveSide switch
+        {
+            TailDir.Left => new PointF(b.X - gap, b.Y),
+            TailDir.Right => new PointF(b.X + gap, b.Y),
+            TailDir.TopLeft or TailDir.TopRight => new PointF(b.X, b.Y - gap),
+            _ => new PointF(b.X, b.Y + gap),
+        };
+        return (new((a.X + b.X) / 2, (a.Y + b.Y) / 2), Tip(body), grip, a, b);
+    }
+
+    // Freeze the legacy body position before changing its tail so existing captures do not jump.
+    public void AnchorBody(Gfx g)
+    {
+        if (BodyPosition.HasValue) return;
+        var body = BodyBounds(g);
+        BodyPosition = new(body.X, body.Y);
+        TailTip = Tail;
+    }
+
+    public void SetTailDirection(TailDir direction, Gfx g)
+    {
+        AnchorBody(g);
+        Dir = direction;
+        TailSide = null;
+        TailPosition = null;
+        TailWidth = null;
+        TailTip = null;
+    }
+
+    public void DragTail(int handle, PointF point, Gfx g)
+    {
+        AnchorBody(g);
+        var body = BodyBounds(g);
+        if (handle == 1) { TailTip = point; return; }
+        var handles = TailHandles(g);
+        if (handle == 2)
+        {
+            bool vertical = EffectiveSide is TailDir.Left or TailDir.Right;
+            float origin = vertical ? body.Y : body.X, length = vertical ? body.Height : body.Width;
+            float center = vertical ? handles.Start.Y : handles.Start.X;
+            float radius = MathF.Min(FontSize * 0.8f, MathF.Min(body.Width, body.Height) / 2);
+            float maxWidth = MathF.Max(0, 2 * MathF.Min(center - origin - radius, origin + length - radius - center));
+            TailWidth = Math.Clamp(2 * MathF.Abs(vertical ? point.Y - center : point.X - center), MathF.Min(2 * DetailScale, maxWidth), maxWidth);
+            TailPosition = (center - origin) / length;
+            return;
+        }
+
+        // Choose the closest body edge, then slide the tail base along that edge.
+        float x = Math.Clamp(point.X, body.X, body.X + body.Width);
+        float y = Math.Clamp(point.Y, body.Y, body.Y + body.Height);
+        PointF[] projections = [new(x, body.Y), new(body.X + body.Width, y),
+            new(x, body.Y + body.Height), new(body.X, y)];
+        TailDir[] sides = [TailDir.TopLeft, TailDir.Right, TailDir.BottomLeft, TailDir.Left];
+        int nearest = 0;
+        float distance = float.MaxValue;
+        for (int i = 0; i < projections.Length; i++)
+        {
+            float candidate = Geo.SegmentDistance(point, projections[i], projections[i]);
+            if (candidate < distance) { nearest = i; distance = candidate; }
+        }
+        TailSide = sides[nearest];
+        TailPosition = nearest is 1 or 3 ? (y - body.Y) / body.Height : (x - body.X) / body.Width;
+        TailTip ??= handles.End;
+    }
+
     public override RectF Bounds(Gfx g)
     {
         var (body, _, _) = Layout(g);
         if (Dir == TailDir.None) return body;
-        float x0 = MathF.Min(body.X, Tail.X), y0 = MathF.Min(body.Y, Tail.Y);
-        float x1 = MathF.Max(body.X + body.Width, Tail.X), y1 = MathF.Max(body.Y + body.Height, Tail.Y);
+        var tip = Tip(body);
+        float x0 = MathF.Min(body.X, tip.X), y0 = MathF.Min(body.Y, tip.Y);
+        float x1 = MathF.Max(body.X + body.Width, tip.X), y1 = MathF.Max(body.Y + body.Height, tip.Y);
         return new RectF(x0, y0, x1 - x0, y1 - y0);
     }
 
     public override bool HitTest(PointF p, float tol, Gfx g)
     {
         var (body, _, _) = Layout(g);
-        return Geo.Inside(Geo.Inflate(body, tol), p) || (Dir != TailDir.None && Geo.SegmentDistance(p, Tail, Tail) <= tol * 2);
+        if (Geo.Inside(Geo.Inflate(body, tol), p)) return true;
+        if (Dir == TailDir.None) return false;
+        var handles = TailHandles(g);
+        return Geo.SegmentDistance(p, handles.End, handles.End) <= tol * 2 ||
+            Geo.SegmentDistance(p, handles.BaseA, handles.End) <= tol || Geo.SegmentDistance(p, handles.BaseB, handles.End) <= tol;
     }
 
-    public override void Offset(float dx, float dy) => Tail = new(Tail.X + dx, Tail.Y + dy);
+    public override void Offset(float dx, float dy)
+    {
+        Tail = new(Tail.X + dx, Tail.Y + dy);
+        if (BodyPosition is { } body) BodyPosition = new(body.X + dx, body.Y + dy);
+        if (TailTip is { } tip) TailTip = new(tip.X + dx, tip.Y + dy);
+    }
 
     public override void Draw(GdiSurface target, Gfx g)
     {
         var (body, _, radius) = Layout(g);
-        Stickers.Bubble(g, body, Tail, radius, Color, Dir);
+        var tip = Tip(body);
+        var side = Dir == TailDir.None || Geo.Inside(body, tip) ? TailDir.None : EffectiveSide;
+        Stickers.Bubble(g, body, tip, radius, Color, side, TailPosition, TailWidth, DetailScale);
         base.Draw(target, g);
     }
 }
@@ -422,8 +518,8 @@ internal sealed class NumberAnnotation : Annotation
 
     public override bool IsMeaningful => true;
 
-    public float BadgeSize => FontSize > 0 ? MeasureBadge() : !HasBox || Outside ? Size : MathF.Min(Size, MathF.Max(2,
-        MathF.Min(MathF.Abs(End.X - Center.X), MathF.Abs(End.Y - Center.Y)) - MathF.Max(2, Width) - (Square ? 0 : 4)));
+    public float BadgeSize => FontSize > 0 ? MeasureBadge() : !HasBox || Outside ? Size : MathF.Min(Size, MathF.Max(2 * DetailScale,
+        MathF.Min(MathF.Abs(End.X - Center.X), MathF.Abs(End.Y - Center.Y)) - MathF.Max(2 * DetailScale, Width) - (Square ? 0 : 4 * DetailScale)));
 
     float MeasureBadge()
     {
@@ -444,8 +540,8 @@ internal sealed class NumberAnnotation : Annotation
         {
             if (BadgePosition is { } position) return position;
             if (!HasBox) return Center;
-            float margin = Square ? 0 : 2;
-            float offset = BadgeSize / 2 + margin + MathF.Max(2, Width) / 2;
+            float margin = Square ? 0 : 2 * DetailScale;
+            float offset = BadgeSize / 2 + margin + MathF.Max(2 * DetailScale, Width) / 2;
             if (Quadrant is >= 0 and <= 3)
             {
                 float sx = End.X >= Center.X ? 1 : -1, sy = End.Y >= Center.Y ? 1 : -1;
@@ -464,12 +560,13 @@ internal sealed class NumberAnnotation : Annotation
         if (HasBox)
         {
             var box = Geo.FromPoints(Center, End);
-            if (Glow) Stickers.NumberOutlineGlow(g, box, MathF.Max(2, Width), Color);
-            if (Glow) g.Rect(Stickers.WithOpacity((Color & 0xFF000000) | 0xFFFFFF, 0.95f), MathF.Max(2, Width) + 3, box.X, box.Y, box.Width, box.Height);
-            g.Rect(Color, MathF.Max(2, Width), box.X, box.Y, box.Width, box.Height);
+            float stroke = MathF.Max(2 * DetailScale, Width);
+            if (Glow) Stickers.NumberOutlineGlow(g, box, stroke, Color, DetailScale);
+            if (Glow) g.Rect(Stickers.WithOpacity((Color & 0xFF000000) | 0xFFFFFF, 0.95f), stroke + 3 * DetailScale, box.X, box.Y, box.Width, box.Height);
+            g.Rect(Color, stroke, box.X, box.Y, box.Width, box.Height);
         }
         var c = BadgeCenter;
-        Stickers.Number(g, Number, c.X, c.Y, BadgeSize, Color, Square, Glow, FontSize);
+        Stickers.Number(g, Number, c.X, c.Y, BadgeSize, Color, Square, Glow, FontSize, DetailScale);
     }
 
     public override RectF Bounds(Gfx g)
@@ -487,7 +584,7 @@ internal sealed class NumberAnnotation : Annotation
         return Square ? Geo.Inside(new(c.X - BadgeSize / 2 - tol, c.Y - BadgeSize / 2 - tol, BadgeSize + tol * 2, BadgeSize + tol * 2), p)
             : Geo.SegmentDistance(p, c, c) <= BadgeSize / 2 + tol;
     }
-    public override bool HitTest(PointF p, float tol, Gfx g) => HitBadge(p, tol) || (HasBox && Geo.NearEdge(Geo.FromPoints(Center, End), p, tol + MathF.Max(2, Width)));
+    public override bool HitTest(PointF p, float tol, Gfx g) => HitBadge(p, tol) || (HasBox && Geo.NearEdge(Geo.FromPoints(Center, End), p, tol + MathF.Max(2 * DetailScale, Width)));
 
     public void ResizeBox(int handle, PointF point)
     {

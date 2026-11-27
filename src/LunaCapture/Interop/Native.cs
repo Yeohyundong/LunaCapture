@@ -206,6 +206,8 @@ internal static unsafe partial class User32
     [LibraryImport(Dll, StringMarshalling = StringMarshalling.Utf16)]
     public static partial int DrawTextW(nint hdc, string text, int len, RECT* rect, uint format);
     [LibraryImport(Dll)] public static partial int OpenClipboard(nint hwnd);
+    [LibraryImport(Dll, StringMarshalling = StringMarshalling.Utf16)]
+    public static partial uint RegisterClipboardFormatW(string name);
     [LibraryImport(Dll)] public static partial int EmptyClipboard();
     [LibraryImport(Dll)] public static partial nint SetClipboardData(uint format, nint mem);
     [LibraryImport(Dll)] public static partial int CloseClipboard();

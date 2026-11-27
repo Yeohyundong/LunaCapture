@@ -27,7 +27,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
     readonly Stack<(PixelImage Base, List<Annotation> Items)> _undo = new(), _redo = new();
 
     // 선택 (그려 둔 주석을 클릭해서 옮기거나 고치기)
-    enum DragMode { None, Draw, Move, BadgeMove, Handle, Marquee, MarqueeMove }
+    enum DragMode { None, Draw, Move, BadgeMove, Handle, Marquee, MarqueeMove, ObjectMarquee, ObjectMove, ObjectResize }
     Annotation? _selected;
     DragMode _mode;
     int _handle = -1;
@@ -138,7 +138,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         _items.AddRange(doc.Items);
         _undo.Clear();
         _redo.Clear();
-        _selected = null;
+        ClearSelection();
         _active = null;
         _marquee = null;
         _stripOpen = false;
@@ -171,6 +171,18 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
 
     void OnPanelClick(int x, int y)
     {
+        int deleteIndex = _panel!.HitDelete(x, y);
+        if (deleteIndex >= 0)
+        {
+            var target = _panel.EntryAt(deleteIndex);
+            if (target != null && HistoryDeleteButton.Delete(Handle, target))
+            {
+                _panel.Load();
+                ShowStatus("캡처 기록 삭제 · 저장된 파일은 유지");
+                Invalidate();
+            }
+            return;
+        }
         var e = _panel!.EntryAt(_panel.Hit(x, y));
         if (e == null || e.Id == _doc.HistoryId) return;
         if (e.Kind != "image")
@@ -265,6 +277,14 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             case Win.WM_LBUTTONUP:
                 OnMouseUp();
                 return 0;
+            case 0x0215: // WM_CAPTURECHANGED
+                if (_dragging && _mode == DragMode.ObjectResize)
+                {
+                    _dragging = false;
+                    _mode = DragMode.None;
+                    FinishObjectResize();
+                }
+                return 0;
 
             case Win.WM_RBUTTONUP:
                 OnRightClick(Win.LoWord(lParam), Win.HiWord(lParam));
@@ -336,6 +356,14 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
 
         if (!_dragging) return;
         var p = ToImage(x, y);
+        if (_mode == DragMode.ObjectMarquee)
+        {
+            _objectMarquee = ClampToImage(Geo.FromPoints(_objectAnchor, p));
+            Invalidate();
+            return;
+        }
+        if (_mode == DragMode.ObjectMove) { DragObjects(p); return; }
+        if (_mode == DragMode.ObjectResize) { ResizeObjects(p); return; }
         if (_mode is DragMode.Marquee or DragMode.MarqueeMove)
         {
             DragMarquee(p);
@@ -391,6 +419,8 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
 
         CommitText();
         var p = ToImage(x, y);
+        if (_tool == Tool.Objects) { OnObjectToolDown(x, y, p); return; }
+        _objectSelection.Clear();
         if (_tool == Tool.Select)
         {
             OnSelectToolDown(x, y, p);
@@ -457,6 +487,27 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         if (!_dragging) return;
         _dragging = false;
         User32.ReleaseCapture();
+        if (_mode == DragMode.ObjectResize)
+        {
+            _mode = DragMode.None;
+            FinishObjectResize();
+            return;
+        }
+        if (_mode == DragMode.ObjectMarquee)
+        {
+            _mode = DragMode.None;
+            FinishObjectMarquee();
+            return;
+        }
+        if (_mode == DragMode.ObjectMove)
+        {
+            _mode = DragMode.None;
+            var clicked = _objectClicked;
+            _objectClicked = null;
+            if (!_dragChanged && clicked != null) SetObjectSelection([clicked]);
+            Invalidate();
+            return;
+        }
         if (_mode == DragMode.Marquee)
         {
             _mode = DragMode.None;
@@ -496,12 +547,16 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             id = mh is 1 or 2 ? 32643 : 32642;
         else if (_mode == DragMode.MarqueeMove || (!_dragging && _marquee is { } mq && Geo.Inside(mq, ToImage(pt.X, pt.Y))))
             id = 32646;
+        else if (_mode == DragMode.ObjectResize)
+            id = _objectResizeCorner is 1 or 2 ? 32643 : 32642;
+        else if (HitObjectResizeHandle(pt.X, pt.Y) is var groupHandle and >= 0)
+            id = groupHandle is 1 or 2 ? 32643 : 32642;
         else if (_selected != null && HitHandle(pt.X, pt.Y) is var h and >= 0)
             id = HandleCursor(_selected, h);
-        else if (_mode is DragMode.Move or DragMode.BadgeMove || (_active == null && HitItem(ToImage(pt.X, pt.Y)) is { } hover && (_tool != Tool.Select || SelectToolPicks(hover))))
+        else if (_mode is DragMode.Move or DragMode.BadgeMove or DragMode.ObjectMove || (_active == null && HitItem(ToImage(pt.X, pt.Y)) is { } hover && (_tool != Tool.Select || SelectToolPicks(hover))))
             id = 32646; // IDC_SIZEALL: 옮기기
         else
-            id = _tool is Tool.Text or Tool.Bubble ? Win.IDC_IBEAM : Win.IDC_CROSS;
+            id = _tool == Tool.Objects ? Win.IDC_ARROW : _tool is Tool.Text or Tool.Bubble ? Win.IDC_IBEAM : Win.IDC_CROSS;
         User32.SetCursor(User32.LoadCursorW(0, id));
     }
 
@@ -515,7 +570,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         return a switch
         {
             NumberAnnotation { HasBox: true } or RectAnnotation or MosaicAnnotation or ImageAnnotation or SpotlightAnnotation => handle is 1 or 2 ? SizeNesw : SizeNwse, // ↗↙ / ↖↘
-            ArrowAnnotation => SizeAll, // 화살표 끝점은 어느 방향으로든 움직인다
+            ArrowAnnotation or BubbleAnnotation => SizeAll, // 끝점·꼬리는 자유롭게 이동
             _ => SizeNwse,              // 스티커·번호: 오른쪽 아래 손잡이
         };
     }
@@ -538,7 +593,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             case ItemKind.FontSize: if (item.Value != 0) ChangeTextSize(item.Value * 2); break;
             case ItemKind.Undo: Undo(); break;
             case ItemKind.Redo: Redo(); break;
-            case ItemKind.Copy: if (_marquee != null) CopyRegion(); else CopyToClipboard(); break;
+            case ItemKind.Copy: CopySelectionOrImage(); break;
             case ItemKind.SaveAs: if (_marquee != null) SaveRegion(); else SaveAs(); break;
             case ItemKind.OpenFolder: OpenSaveFolder(); break;
             case ItemKind.Settings: ShowSettings(); break;
@@ -555,6 +610,11 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
 
     void OnKeyDown(int vk)
     {
+        if (_dragging && _mode == DragMode.ObjectResize)
+        {
+            if (vk == Win.VK_ESCAPE) CancelObjectResize();
+            return;
+        }
         if (vk == Win.VK_ESCAPE && HasStrip)
         {
             _stripOpen = false;
@@ -580,11 +640,13 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             {
                 case 'Z': if (shift) Redo(); else Undo(); break;
                 case 'Y': Redo(); break;
-                case 'C': if (_marquee != null) CopyRegion(); else CopyToClipboard(); break;
+                case 'C': CopySelectionOrImage(); break;
                 case 'S': if (_marquee != null) SaveRegion(); else SaveAs(); break;
                 case 'X': if (_marquee != null) CutRegion(); break;
                 case 'V': if (Editing == null) Paste(); break;
-                case 'A': if (Editing == null) SelectAll(); break;
+                case 'A':
+                    if (Editing == null) { if (_tool == Tool.Objects) SelectAllObjects(); else SelectAll(); }
+                    break;
                 // 겹치는 순서: Ctrl+↑ 앞으로, Ctrl+↓ 뒤로, Shift와 함께면 맨 앞/맨 뒤 (Ctrl 없이 화살표만 누르면 위치 이동)
                 case 0x26: Reorder(shift ? ZMove.Front : ZMove.Forward); break;   // ↑
                 case 0x28: Reorder(shift ? ZMove.Back : ZMove.Backward); break;   // ↓
@@ -598,12 +660,27 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             else if (vk == 0x09 && _active is BubbleAnnotation b) // Tab: 말풍선 꼬리 방향 돌려 보기
             {
                 int next = (Array.IndexOf(Stickers.Tails, b.Dir) + (Win.IsKeyDown(Win.VK_SHIFT) ? Stickers.Tails.Length - 1 : 1)) % Stickers.Tails.Length;
-                s_tail = b.Dir = Stickers.Tails[next];
+                s_tail = Stickers.Tails[next];
+                using (var mg = MeasureGfx()) b.SetTailDirection(s_tail, mg);
                 RenderActive();
             }
             return; // 나머지는 WM_CHAR / IME 에서 처리
         }
 
+        if (_objectSelection.Count > 1)
+        {
+            int step = shift ? 10 : 1;
+            switch (vk)
+            {
+                case Win.VK_DELETE:
+                case Win.VK_BACK: DeleteObjects(); return;
+                case Win.VK_ESCAPE: ClearSelection(); Invalidate(); return;
+                case 0x25: PushUndo(); MoveObjects(-step / _zoom, 0); return;
+                case 0x26: PushUndo(); MoveObjects(0, -step / _zoom); return;
+                case 0x27: PushUndo(); MoveObjects(step / _zoom, 0); return;
+                case 0x28: PushUndo(); MoveObjects(0, step / _zoom); return;
+            }
+        }
         if (_marquee != null && _selected == null)
         {
             int mstep = shift ? 10 : 1;
@@ -624,7 +701,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             {
                 case Win.VK_DELETE:
                 case Win.VK_BACK: DeleteSelected(); return;
-                case Win.VK_ESCAPE: _selected = null; Invalidate(); return;
+                case Win.VK_ESCAPE: ClearSelection(); Invalidate(); return;
                 case 0x25: Nudge(-step, 0); return; // ←
                 case 0x26: Nudge(0, -step); return; // ↑
                 case 0x27: Nudge(step, 0); return;  // →
@@ -638,6 +715,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             case Win.VK_RETURN: Close(); break;
             case 'A': SetTool(Tool.Arrow); break;
             case 'E': SetTool(Tool.Select); break;
+            case 'V': SetTool(Tool.Objects); break;
             case 'R': SetTool(Tool.Rect); break;
             case 'P': SetTool(Tool.Pen); break;
             case 'H': SetTool(Tool.Highlighter); break;
@@ -661,7 +739,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         }
         CommitText();
         _tool = tool;
-        _selected = null;
+        ClearSelection();
         _marquee = null;
         _stripOpen = StripMode != 0;
         Invalidate();
@@ -683,14 +761,15 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         RenderActive();
     }
 
-    /// <summary>말풍선: 클릭한 곳을 꼬리가 가리키고, 글자는 텍스트 도구처럼 입력한다.</summary>
+    /// <summary>클릭한 곳을 글자 시작점으로 삼아 말풍선 몸통을 배치한다.</summary>
     void StartBubble(PointF p)
     {
+        float size = _textSize * _scale;
         _active = new BubbleAnnotation
         {
             Color = _color,
-            FontSize = _textSize * _scale,
-            Tail = p,
+            FontSize = size,
+            BodyPosition = new(p.X - size * 0.7f, p.Y - size * 0.49f),
             Dir = s_tail,
         };
         _typing = true;
@@ -735,6 +814,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
     {
         get
         {
+            if (_objectSelection.Count > 1) return 0;
             if (_selected is NumberAnnotation || _active is NumberAnnotation) return 4;
             if (_selected is StickerAnnotation) return 1;
             if (_selected is BubbleAnnotation || _active is BubbleAnnotation) return 2;
@@ -833,8 +913,9 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         else if (StripMode == 2)
         {
             s_tail = Stickers.Tails[i];
-            if (_active is BubbleAnnotation b) { b.Dir = s_tail; RenderActive(); } // 입력 중인 말풍선에도 바로 적용
-            else if (_selected is BubbleAnnotation sb) { PushUndo(); sb.Dir = s_tail; RebuildCommitted(); }
+            using var mg = MeasureGfx();
+            if (_active is BubbleAnnotation b) { b.SetTailDirection(s_tail, mg); RenderActive(); }
+            else if (_selected is BubbleAnnotation sb) { PushUndo(); sb.SetTailDirection(s_tail, mg); RebuildCommitted(); }
         }
         else
         {
@@ -1036,7 +1117,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
     {
         _items.Clear();
         _items.AddRange(state.Items);
-        _selected = null;
+        ClearSelection();
         if (ReferenceEquals(state.Base, _base)) RebuildCommitted();
         else { _marquee = null; SetBase(state.Base); } // 자르기 되돌리기
     }
@@ -1107,6 +1188,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
     /// <summary>클릭이 주석이나 손잡이에 닿으면 선택/옮기기/크기 조절을 시작하고 true. 빈 곳이면 선택 해제 후 false(→ 새로 그리기).</summary>
     bool TrySelectAt(int x, int y, PointF p)
     {
+        _objectSelection.Clear();
         if (_selected != null && HitHandle(x, y) is var h and >= 0)
         {
             NormalizeForHandles(_selected);
@@ -1132,7 +1214,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
                 for (int i = _items.Count - 1; i >= 0; i--)
                     if (_items[i] is RectAnnotation shape && shape.ContainsInside(p)) { ReEdit(shape); return true; }
             }
-            if (_selected != null) { _selected = null; Invalidate(); }
+            if (_selected != null) { ClearSelection(); Invalidate(); }
             return false;
         }
 
@@ -1153,7 +1235,9 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
 
         if (_selected != item) ShowStatus("Ctrl+↑ 앞으로 · Ctrl+↓ 뒤로 · Shift와 함께 맨 앞/뒤 · Del 삭제 · 오른쪽 클릭 메뉴");
         _selected = item;
-        bool moveBadge = item is NumberAnnotation badge && badge.HitBadge(p, 2 / _zoom);
+        if (item is BubbleAnnotation)
+            ShowStatus("꼬리 손잡이: 시작점·끝점·폭 드래그 · 몸통 드래그: 전체 이동 · 더블클릭: 글 수정");
+        bool moveBadge = _tool != Tool.Objects && item is NumberAnnotation badge && badge.HitBadge(p, 2 / _zoom);
         if (moveBadge) ShowStatus("번호 드래그: 번호만 이동 · 박스 테두리 드래그: 함께 이동 · 더블클릭: 번호 수정");
         BeginDrag(moveBadge ? DragMode.BadgeMove : DragMode.Move, p);
         Invalidate();
@@ -1195,7 +1279,18 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
     /// <summary>주석을 오른쪽 클릭: 선택하고 순서·삭제 메뉴를 띄운다.</summary>
     void OnRightClick(int x, int y)
     {
-        if (y < _toolbar.Height || _active != null || _dragging) return;
+        if (y < _toolbar.Height || _dragging) return;
+        if (!FinishNumberEdit(true)) return;
+        CommitText();
+        if (_active != null) return;
+        if (PanelShown && _panel!.Contains(x, y)) return;
+        if (_tool == Tool.Objects)
+        {
+            var hit = HitItem(ToImage(x, y));
+            if (hit != null && !SelectedObjects().Contains(hit)) SetObjectSelection([hit]);
+            ShowObjectMenu(x, y);
+            return;
+        }
         if (_marquee is { } mq && Geo.Inside(mq, ToImage(x, y)))
         {
             ShowRegionMenu(x, y);
@@ -1220,6 +1315,9 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         User32.AppendMenuW(menu, Enabled(index > 0), 4, "맨 뒤로\tCtrl+Shift+↓");
         User32.AppendMenuW(menu, Win.MF_SEPARATOR, 0, null);
         User32.AppendMenuW(menu, Win.MF_STRING, 5, "삭제\tDel");
+        User32.AppendMenuW(menu, Win.MF_SEPARATOR, 0, null);
+        User32.AppendMenuW(menu, Win.MF_STRING, 6, "객체 복사\tCtrl+C");
+        User32.AppendMenuW(menu, Win.MF_STRING, 7, "추가한 객체 모두 선택");
 
         POINT pt = new() { X = x, Y = y };
         User32.ClientToScreen(Handle, &pt);
@@ -1232,6 +1330,8 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             case 3: Reorder(ZMove.Backward); break;
             case 4: Reorder(ZMove.Back); break;
             case 5: DeleteSelected(); break;
+            case 6: CopyObjects(); break;
+            case 7: SelectAllObjects(); break;
         }
     }
 
@@ -1265,16 +1365,28 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         }
         else
         {
-            ApplyHandle(_selected, _handle, p);
+            if (_selected is BubbleAnnotation bubble)
+            {
+                using var mg = MeasureGfx();
+                bubble.DragTail(_handle, p, mg);
+            }
+            else ApplyHandle(_selected, _handle, p);
         }
         RebuildCommitted();
     }
 
     /// <summary>크기 조절 손잡이 (이미지 좌표). 사각형·모자이크 = 네 모서리, 화살표 = 양 끝, 스티커·번호 = 오른쪽 아래.</summary>
-    static PointF[] HandlePoints(Annotation a)
+    PointF[] HandlePoints(Annotation a)
     {
         switch (a)
         {
+            case BubbleAnnotation bubble:
+            {
+                if (bubble.Dir == TailDir.None) return [];
+                using var mg = MeasureGfx();
+                var tail = bubble.TailHandles(mg);
+                return [tail.Start, tail.End, tail.Width];
+            }
             case RectAnnotation r: return Corners(Geo.FromPoints(r.A, r.B));
             case MosaicAnnotation m: return Corners(Geo.FromPoints(m.A, m.B));
             case ImageAnnotation im: return Corners(im.Box);
@@ -1294,12 +1406,20 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         if (_selected == null) return -1;
         var hs = HandlePoints(_selected);
         float reach = 7 * _scale;
+        int closest = -1;
+        float nearest = float.MaxValue;
         for (int i = 0; i < hs.Length; i++)
         {
             float sx = _imgX + hs[i].X * _zoom, sy = _imgY + hs[i].Y * _zoom;
-            if (MathF.Abs(x - sx) <= reach && MathF.Abs(y - sy) <= reach) return i;
+            float dx = x - sx, dy = y - sy;
+            float distance = dx * dx + dy * dy;
+            if (MathF.Abs(dx) <= reach && MathF.Abs(dy) <= reach && distance < nearest)
+            {
+                closest = i;
+                nearest = distance;
+            }
         }
-        return -1;
+        return closest;
     }
 
     /// <summary>사각형·모자이크는 A = 왼쪽 위, B = 오른쪽 아래로 맞춰 둔다 (손잡이 번호가 모서리와 맞게).</summary>
@@ -1353,8 +1473,13 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
     void ReEdit(TextAnnotation t)
     {
         PushUndo();
+        if (t is BubbleAnnotation bubble)
+        {
+            using var mg = MeasureGfx();
+            bubble.AnchorBody(mg);
+        }
         _items.Remove(t);
-        _selected = null;
+        ClearSelection();
         RebuildCommitted();
         _reEditing = true;
         _active = t;
@@ -1369,7 +1494,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         if (_selected == null) return;
         PushUndo();
         _items.Remove(_selected);
-        _selected = null;
+        ClearSelection();
         RebuildCommitted();
     }
 
@@ -1387,7 +1512,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         if (_selected == null) return;
         PushUndo();
         uint c = _color;
-        float width = LineWidths[_thickness] * _scale;
+        float width = LineWidths[_thickness] * _scale * _selected.DetailScale;
         switch (_selected)
         {
             case RectAnnotation r:
@@ -1399,7 +1524,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
                 break;
             case PenAnnotation pen:
                 if (color) pen.Color = pen.Highlighter ? (c & 0x00FFFFFF) | ((c >> 24) * 112 / 255) << 24 : c;
-                else pen.Width = pen.Highlighter ? (LineWidths[_thickness] * 3 + 8) * _scale : width;
+                else pen.Width = pen.Highlighter ? (LineWidths[_thickness] * 3 + 8) * _scale * pen.DetailScale : width;
                 break;
             case ArrowAnnotation:
                 if (color) _selected.Color = c; else _selected.Width = width;
@@ -1429,11 +1554,39 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
         g.Rect(0x66000000, 3 * _scale, x, y, w, h);
         g.Rect(Toolbar.Accent, 1.5f * _scale, x, y, w, h);
         float hs = 8 * _scale;
-        foreach (var hp in HandlePoints(_selected))
+        var handles = HandlePoints(_selected);
+        if (_selected is BubbleAnnotation bubble && handles.Length == 3)
         {
+            using var mg = MeasureGfx();
+            var tail = bubble.TailHandles(mg);
+            var start = handles[0];
+            var end = handles[1];
+            var width = handles[2];
+            g.Line(Toolbar.Accent, _scale, _imgX + start.X * _zoom, _imgY + start.Y * _zoom,
+                _imgX + end.X * _zoom, _imgY + end.Y * _zoom);
+            g.Line(0xFFFFC53D, 2 * _scale, _imgX + tail.BaseA.X * _zoom, _imgY + tail.BaseA.Y * _zoom,
+                _imgX + tail.BaseB.X * _zoom, _imgY + tail.BaseB.Y * _zoom);
+            g.Line(0xFFFFC53D, _scale, _imgX + tail.BaseB.X * _zoom, _imgY + tail.BaseB.Y * _zoom,
+                _imgX + width.X * _zoom, _imgY + width.Y * _zoom);
+        }
+        for (int i = 0; i < handles.Length; i++)
+        {
+            var hp = handles[i];
             float sx = _imgX + hp.X * _zoom, sy = _imgY + hp.Y * _zoom;
-            g.FillRoundRect(0xFFFFFFFF, sx - hs / 2, sy - hs / 2, hs, hs, 2 * _scale);
+            uint handleColor = _selected is BubbleAnnotation && i == 2 ? 0xFFFFC53D : 0xFFFFFFFF;
+            g.FillRoundRect(handleColor, sx - hs / 2, sy - hs / 2, hs, hs, 2 * _scale);
             g.RoundRect(Toolbar.Accent, 1.5f * _scale, sx - hs / 2, sy - hs / 2, hs, hs, 2 * _scale);
+            if (_selected is BubbleAnnotation)
+            {
+                using var label = new GdiFont(UiFonts.Family, 11 * _scale, bold: false);
+                string text = i switch { 0 => "시작", 1 => "끝", _ => "폭" };
+                float labelX = i == 0 ? sx - 34 * _scale : sx + 8 * _scale;
+                float labelY = sy - (i == 2 ? 18 : 8) * _scale;
+                float labelWidth = g.MeasureWidth(text, label) + 6 * _scale;
+                g.FillRoundRect(0xEE232329, labelX - 3 * _scale, labelY - 2 * _scale,
+                    labelWidth, g.LineHeight(label) + 4 * _scale, 3 * _scale);
+                g.Text(text, label, handleColor, labelX, labelY);
+            }
         }
     }
 
@@ -1639,6 +1792,7 @@ internal sealed unsafe partial class EditorWindow : NativeWindow
             _toolbar.ThicknessIndex = _thickness;
             _toolbar.TextSize = CurrentTextSize;
             DrawSelection(g);
+            DrawObjectSelection(g);
             DrawNumberEdit(g);
             DrawMarquee(g);
             _toolbar.CanUndo = _undo.Count > 0 || Editing != null;

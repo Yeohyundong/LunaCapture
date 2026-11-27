@@ -166,7 +166,7 @@ internal sealed unsafe partial class TrayApp : NativeWindow
         try
         {
             // 편집기를 열더라도 원본은 먼저 복사·저장해 둔다 (편집기를 안 써도 바로 붙여넣기 가능).
-            copied = ClipboardService.SetImage(Handle, image);
+            copied = ClipboardService.SetImage(Handle, image, preserveObjects: true);
             path = SaveImage(image, Path.Combine(SaveFolder, fileName));
             histId = HistoryStore.AddImage(image, path);
         }
@@ -212,7 +212,7 @@ internal sealed unsafe partial class TrayApp : NativeWindow
             {
                 try
                 {
-                    ClipboardService.SetImage(Handle, edited);
+                    ClipboardService.SetImage(Handle, edited, preserveObjects: true);
                     path = SaveImage(edited, path ?? Path.Combine(SaveFolder,
                         fileName ?? CaptureFileName.Create(null, DateTime.Now, "png")));
                     // 자르기로 원본이 바뀌었을 때만 원본 파일도 다시 쓴다

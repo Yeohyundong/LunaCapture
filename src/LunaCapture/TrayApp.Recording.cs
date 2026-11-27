@@ -117,7 +117,7 @@ internal sealed partial class TrayApp
             HistoryStore.AddRecording(_recKind == RecordKind.Gif ? "gif" : "mp4", result.Path, _recThumb, _recRect.Width, _recRect.Height);
             _recThumb = null;
             _history?.Reload();
-            bool copied = ClipboardService.SetFile(Handle, result.Path);
+            bool copied = ClipboardService.SetFile(Handle, result.Path, preserveObjects: true);
 
             string title = result.HitLimit ? "목표 용량에 도달해 녹화를 멈췄어요" : $"{kindName} 저장 완료";
             string info = $"{FormatSize(result.Bytes)} · {result.DurationMs / 1000.0:0.0}초 · {result.Frames}프레임";
